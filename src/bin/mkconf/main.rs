@@ -26,7 +26,7 @@ struct Args {
     host: String,
 
     /// Peer host
-    #[arg(long, default_value_t = String::from("localhost"))]
+    #[arg(long, default_value_t = String::from("http://localhost"))]
     peer_host: String,
 
     /// Listen port start
