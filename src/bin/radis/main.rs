@@ -1,6 +1,7 @@
 use clap::Parser;
 use radis::conf::Config;
-use radis::raft::{RaftServer, RaftService};
+use radis::raft::{RaftServer, RaftService, RequestVoteArgs};
+use tokio;
 use tonic::transport::Server;
 
 #[derive(Parser, Debug)]
@@ -19,6 +20,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("radis node <{}> listening on {}", cfg.id, addr);
 
     let srv = RaftService::new(cfg);
+    let context = srv.context();
+    let (peers, me) = {
+        let ctx = context.read().await;
+        (ctx.peers(), ctx.me().to_string())
+    };
+    for fd in 0..peers {
+        let candidate_id = me.clone();
+        let ctx = context.clone();
+        tokio::spawn(async move {
+            let peer = ctx.read().await.get_peer(fd).clone();
+            let resp = peer
+                .lock()
+                .await
+                .request_vote(RequestVoteArgs {
+                    term: 0,
+                    candidate_id: candidate_id,
+                    last_log_index: 0,
+                    last_log_term: 0,
+                })
+                .await;
+            println!("response: {:?}", resp);
+        });
+    }
 
     Server::builder()
         .add_service(RaftServer::new(srv))
