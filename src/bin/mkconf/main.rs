@@ -22,8 +22,12 @@ struct Args {
     sub_dir: bool,
 
     /// Listen host
-    #[arg(long, default_value_t = String::from("localhost"))]
+    #[arg(long, default_value_t = String::from("0.0.0.0"))]
     host: String,
+
+    /// Peer host
+    #[arg(long, default_value_t = String::from("localhost"))]
+    peer_host: String,
 
     /// Listen port start
     #[arg(long, default_value_t = 50000)]
@@ -44,7 +48,7 @@ fn main() {
         let cfg = Config {
             id: name,
             listen_addr: join_host_port(&args.host, args.port + id as u16),
-            peer_addrs: make_peer_addrs(&args.host, args.port, args.peers, id),
+            peer_addrs: make_peer_addrs(&args.peer_host, args.port, args.peers, id),
         };
         let cfg = toml::to_string_pretty(&cfg).unwrap();
 
