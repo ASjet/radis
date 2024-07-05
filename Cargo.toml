@@ -19,6 +19,7 @@
         "derive",
     ]}
     prost = "0.12.6"
+    rand = "0.8.5"
     serde = {version = "1.0.203", features = [
         "derive",
     ]}
