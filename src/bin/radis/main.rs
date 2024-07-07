@@ -22,32 +22,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("radis node <{}> listening on {}", cfg.id, addr);
 
     let srv = RaftService::new(cfg);
-    let context = srv.context();
-    let (peers, me) = {
-        let ctx = context.read().await;
-        (ctx.peers(), ctx.me().to_string())
-    };
-    for fd in 0..peers {
-        let candidate_id = me.clone();
-        let ctx = context.clone();
-        tokio::spawn(async move {
-            let peer = ctx.read().await.get_peer(fd).clone();
-            loop {
-                let resp = peer
-                    .lock()
-                    .await
-                    .request_vote(RequestVoteArgs {
-                        term: 0,
-                        candidate_id: candidate_id.clone(),
-                        last_log_index: 0,
-                        last_log_term: 0,
-                    })
-                    .await;
-                println!("response: {:?}", resp);
-                sleep(std::time::Duration::from_secs(1));
-            }
-        });
-    }
 
     Server::builder()
         .add_service(RaftServer::new(srv))
