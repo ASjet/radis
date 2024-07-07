@@ -1,3 +1,5 @@
+use std::thread::sleep;
+
 use clap::Parser;
 use radis::conf::Config;
 use radis::raft::{RaftServer, RaftService, RequestVoteArgs};
@@ -30,17 +32,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ctx = context.clone();
         tokio::spawn(async move {
             let peer = ctx.read().await.get_peer(fd).clone();
-            let resp = peer
-                .lock()
-                .await
-                .request_vote(RequestVoteArgs {
-                    term: 0,
-                    candidate_id: candidate_id,
-                    last_log_index: 0,
-                    last_log_term: 0,
-                })
-                .await;
-            println!("response: {:?}", resp);
+            loop {
+                let resp = peer
+                    .lock()
+                    .await
+                    .request_vote(RequestVoteArgs {
+                        term: 0,
+                        candidate_id: candidate_id.clone(),
+                        last_log_index: 0,
+                        last_log_term: 0,
+                    })
+                    .await;
+                println!("response: {:?}", resp);
+                sleep(std::time::Duration::from_secs(1));
+            }
         });
     }
 

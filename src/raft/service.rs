@@ -94,33 +94,28 @@ impl PeerClient {
         }
     }
 
-    async fn connect(&mut self) {
-        if self.cli.is_some() {
-            return;
+    async fn connect(&mut self) -> Result<&mut RaftClient<Channel>, Status> {
+        if self.cli.is_none() {
+            let channel = self
+                .endpoint
+                .connect()
+                .await
+                .map_err(|e| Status::unavailable(e.to_string()))?;
+            // Once connect() returns successfully, the connection
+            // reliability is handled by the underlying gRPC library.
+            self.cli = Some(RaftClient::new(channel));
         }
 
-        let channel = loop {
-            match self.endpoint.connect().await {
-                Ok(channel) => break channel,
-                Err(e) => {
-                    eprintln!("failed to connect to peer {}: {}", self.endpoint.uri(), e);
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
-            }
-        };
-
-        self.cli = Some(RaftClient::new(channel));
+        Ok(self.cli.as_mut().unwrap())
     }
 
     pub async fn request_vote(
         &mut self,
         args: RequestVoteArgs,
     ) -> Result<RequestVoteReply, Status> {
-        self.connect().await;
         let resp = self
-            .cli
-            .as_mut()
-            .unwrap()
+            .connect()
+            .await?
             .request_vote(Request::new(args))
             .await?;
         Ok(resp.into_inner())
@@ -130,11 +125,9 @@ impl PeerClient {
         &mut self,
         args: AppendEntriesArgs,
     ) -> Result<AppendEntriesReply, Status> {
-        self.connect().await;
         let resp = self
-            .cli
-            .as_mut()
-            .unwrap()
+            .connect()
+            .await?
             .append_entries(Request::new(args))
             .await?;
         Ok(resp.into_inner())
@@ -144,11 +137,9 @@ impl PeerClient {
         &mut self,
         args: InstallSnapshotArgs,
     ) -> Result<InstallSnapshotReply, Status> {
-        self.connect().await;
         let resp = self
-            .cli
-            .as_mut()
-            .unwrap()
+            .connect()
+            .await?
             .install_snapshot(Request::new(args))
             .await?;
         Ok(resp.into_inner())
