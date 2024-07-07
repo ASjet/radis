@@ -1,10 +1,13 @@
-use crate::conf::Config;
-
 use super::config::REQUEST_TIMEOUT;
 use super::service::PeerClient;
+use crate::conf::Config;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
+
+pub type PeerID = String;
+pub type Peer = usize;
+pub type LogIndex = u64;
 
 pub struct Context {
     id: String,
@@ -29,15 +32,19 @@ impl Context {
         }
     }
 
-    pub fn me(&self) -> &str {
+    pub fn me(&self) -> &PeerID {
         &self.id
     }
 
-    pub fn get_peer<'a>(&self, peer: usize) -> Arc<Mutex<PeerClient>> {
+    pub fn get_peer(&self, peer: Peer) -> Arc<Mutex<PeerClient>> {
         self.peers[peer].clone()
     }
 
     pub fn peers(&self) -> usize {
         self.peers.len()
+    }
+
+    pub fn majority(&self) -> usize {
+        self.peers.len() / 2 + 1
     }
 }
