@@ -1,5 +1,5 @@
 use super::context::Context;
-use super::state::{State, TodoState};
+use super::state::{self, FollowerState, State};
 use super::{
     AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply,
     RequestVoteArgs, RequestVoteReply,
@@ -8,25 +8,31 @@ use super::{Raft, RaftClient};
 use crate::conf::Config;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tonic::transport::{Channel, Endpoint};
 use tonic::{Request, Response, Status};
 
 pub struct RaftService {
     context: Arc<RwLock<Context>>,
-    state: Arc<Mutex<Box<dyn State>>>,
+    state: Arc<Mutex<Arc<Box<dyn State>>>>,
 }
 
 impl RaftService {
     pub fn new(cfg: Config) -> Self {
-        RaftService {
-            context: Arc::new(RwLock::new(Context::new(cfg))),
-            state: Arc::new(Mutex::new(Box::new(TodoState {}))),
-        }
+        let (timeout_tx, timeout_rx) = mpsc::channel(1);
+        let (tick_tx, tick_rx) = mpsc::channel(1);
+        let context = Arc::new(RwLock::new(Context::new(cfg, timeout_tx, tick_tx)));
+        let state = Arc::new(Mutex::new(FollowerState::new(0, None)));
+        state::handle_timer(state.clone(), context.clone(), timeout_rx, tick_rx);
+        RaftService { context, state }
     }
 
     pub fn context(&self) -> Arc<RwLock<Context>> {
         self.context.clone()
+    }
+
+    pub fn state(&self) -> Arc<Mutex<Arc<Box<dyn State>>>> {
+        self.state.clone()
     }
 }
 
@@ -34,49 +40,37 @@ impl RaftService {
 impl Raft for RaftService {
     async fn request_vote(
         &self,
-        _request: Request<RequestVoteArgs>,
+        request: Request<RequestVoteArgs>,
     ) -> Result<Response<RequestVoteReply>, Status> {
-        let mut state = self.state.lock().await;
-        let (resp, transition) = state
-            .handle_request_vote(self.context.clone(), _request.into_inner())
+        let state = self.state.lock().await;
+        let (resp, new_state) = state
+            .handle_request_vote(self.context.clone(), request.into_inner())
             .await;
-
-        if let Some(new_state) = transition {
-            *state = new_state;
-        }
-
+        state::transition(state, new_state, self.context.clone()).await;
         Ok(Response::new(resp))
     }
 
     async fn append_entries(
         &self,
-        _request: Request<AppendEntriesArgs>,
+        request: Request<AppendEntriesArgs>,
     ) -> Result<Response<AppendEntriesReply>, Status> {
-        let mut state = self.state.lock().await;
-        let (resp, transition) = state
-            .handle_append_entries(self.context.clone(), _request.into_inner())
+        let state = self.state.lock().await;
+        let (resp, new_state) = state
+            .handle_append_entries(self.context.clone(), request.into_inner())
             .await;
-
-        if let Some(new_state) = transition {
-            *state = new_state;
-        }
-
+        state::transition(state, new_state, self.context.clone()).await;
         Ok(Response::new(resp))
     }
 
     async fn install_snapshot(
         &self,
-        _request: Request<InstallSnapshotArgs>,
+        request: Request<InstallSnapshotArgs>,
     ) -> Result<Response<InstallSnapshotReply>, Status> {
-        let mut state = self.state.lock().await;
-        let (resp, transition) = state
-            .handle_install_snapshot(self.context.clone(), _request.into_inner())
+        let state = self.state.lock().await;
+        let (resp, new_state) = state
+            .handle_install_snapshot(self.context.clone(), request.into_inner())
             .await;
-
-        if let Some(new_state) = transition {
-            *state = new_state;
-        }
-
+        state::transition(state, new_state, self.context.clone()).await;
         Ok(Response::new(resp))
     }
 }
@@ -92,6 +86,10 @@ impl PeerClient {
             endpoint: Channel::builder(addr.parse().unwrap()).timeout(timeout),
             cli: None,
         }
+    }
+
+    pub fn url(&self) -> String {
+        self.endpoint.uri().to_string()
     }
 
     async fn connect(&mut self) -> Result<&mut RaftClient<Channel>, Status> {
