@@ -1,8 +1,6 @@
-use std::thread::sleep;
-
 use clap::Parser;
 use radis::conf::Config;
-use radis::raft::{RaftServer, RaftService, RequestVoteArgs};
+use radis::raft::{RaftServer, RaftService};
 use tokio;
 use tonic::transport::Server;
 
