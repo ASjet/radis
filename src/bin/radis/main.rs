@@ -13,10 +13,11 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    radis::init_logger("info");
+
     let args = Args::parse();
     let cfg = Config::from_path(&args.conf)?;
     let addr = cfg.listen_addr.parse()?;
-    println!("radis node <{}> listening on {}", cfg.id, addr);
 
     let srv = RaftService::new(cfg);
     srv.serve(addr).await?;

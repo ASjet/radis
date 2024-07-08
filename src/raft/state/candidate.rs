@@ -4,21 +4,22 @@ use super::{
     AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply,
     RequestVoteArgs, RequestVoteReply,
 };
-use super::{RaftContext, Role, State, Term};
+use super::{PeerID, RaftContext, Role, State, Term};
 use crate::raft::config;
 use futures::future;
+use log::{debug, error, info};
+use serde::Serialize;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, Notify};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct CandidateState {
     term: Term,
 }
 
 impl CandidateState {
     pub fn new(term: Term) -> Arc<Box<dyn State>> {
-        println!("[{}] become candidate", term);
         Arc::new(Box::new(Self { term }))
     }
 }
@@ -33,13 +34,22 @@ impl State for CandidateState {
         Role::Candidate
     }
 
+    fn following(&self) -> Option<PeerID> {
+        None
+    }
+
     async fn setup_timer(&self, ctx: RaftContext) {
+        let timeout = config::candidate_timeout();
+        let tick = Duration::from_millis(config::REQUEST_VOTE_INTERVAL as u64);
         let ctx = ctx.read().await;
-        let dura = config::candidate_timeout();
-        ctx.reset_timeout(dura).await;
-        ctx.reset_tick(Duration::from_millis(config::REQUEST_VOTE_INTERVAL as u64))
-            .await;
-        println!("[{}] After {:?} start next election...", self.term, dura);
+        ctx.reset_timeout(timeout).await;
+        ctx.reset_tick(tick).await;
+        debug!(target: "raft::state",
+            state:serde = self,
+            timeout:serde = timeout,
+            tick:serde = tick;
+            "setup timer"
+        );
     }
 
     async fn request_vote_logic(
@@ -61,9 +71,10 @@ impl State for CandidateState {
         _ctx: RaftContext,
         args: AppendEntriesArgs,
     ) -> (AppendEntriesReply, Option<Arc<Box<dyn State>>>) {
-        println!(
-            "[{}] peer {} won this election, revert to follower",
-            self.term, args.leader_id
+        info!(target: "raft::state",
+            state:serde = self,
+            leader = args.leader_id;
+            "other peer won current election, revert to follower"
         );
         (
             AppendEntriesReply {
@@ -85,6 +96,10 @@ impl State for CandidateState {
     }
 
     async fn on_timeout(&self, _ctx: RaftContext) -> Option<Arc<Box<dyn State>>> {
+        info!(target: "raft::state",
+            state:serde = self;
+            "election timeout, start new election"
+        );
         Some(CandidateState::new(self.term + 1))
     }
 
@@ -115,8 +130,16 @@ impl State for CandidateState {
 
             requests.push(tokio::spawn(async move {
                 let resp = peer_cli.lock().await.request_vote(args).await;
+                let peer_url = peer_cli.lock().await.url();
                 match resp {
                     Ok(resp) => {
+                        debug!(target: "raft::rpc",
+                            term = resp.term,
+                            peer = peer_url,
+                            granted = resp.granted;
+                            "request vote from peer"
+                        );
+
                         if resp.granted {
                             let mut votes = votes.lock().await;
                             if votes[peer] {
@@ -141,12 +164,14 @@ impl State for CandidateState {
                             notify.notify_one();
                         }
                     }
-                    Err(e) => println!(
-                        "[{}] call peer {} request_vote failed: {:?}",
-                        term,
-                        peer_cli.lock().await.url(),
-                        e
-                    ),
+                    Err(e) => {
+                        error!(target: "raft::rpc",
+                            error:err = e,
+                            peer = peer_url,
+                            term = term;
+                            "call peer rpc RequestVote error"
+                        );
+                    }
                 }
             }));
         }
@@ -163,11 +188,23 @@ impl State for CandidateState {
         let (lock, notify) = &*notify;
         notify.notified().await;
 
-        if *lock.lock().await >= majority {
+        let vote = *lock.lock().await;
+        if vote >= majority {
+            info!(target: "raft::rpc",
+                term = self.term,
+                vote = vote,
+                all = peers;
+                "won current election"
+            );
             Some(LeaderState::new(self.term))
         } else {
             let higher_term = *higher_term.lock().await;
             if higher_term > self.term {
+                info!(target: "raft::rpc",
+                    term = self.term,
+                    new_term = higher_term;
+                    "meet higher term, revert to follower"
+                );
                 Some(FollowerState::new(higher_term, None))
             } else {
                 None

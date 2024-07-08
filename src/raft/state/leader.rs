@@ -2,21 +2,22 @@ use super::{
     AppendEntriesArgs, AppendEntriesReply, FollowerState, InstallSnapshotArgs,
     InstallSnapshotReply, RequestVoteArgs, RequestVoteReply,
 };
-use super::{RaftContext, Role, State, Term};
+use super::{PeerID, RaftContext, Role, State, Term};
 use crate::raft::config;
 use futures::future;
+use log::{debug, error, info};
+use serde::Serialize;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, Notify};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct LeaderState {
     term: Term,
 }
 
 impl LeaderState {
     pub fn new(term: Term) -> Arc<Box<dyn State>> {
-        println!("[{}] won this election", term);
         Arc::new(Box::new(Self { term }))
     }
 }
@@ -28,14 +29,24 @@ impl State for LeaderState {
     }
 
     fn role(&self) -> Role {
-        Role::Candidate
+        Role::Leader
+    }
+
+    fn following(&self) -> Option<PeerID> {
+        None
     }
 
     async fn setup_timer(&self, ctx: RaftContext) {
+        let tick = Duration::from_millis(config::HEARTBEAT_INTERVAL as u64);
         let ctx = ctx.read().await;
         ctx.cancel_timeout().await;
-        ctx.reset_tick(Duration::from_millis(config::HEARTBEAT_INTERVAL as u64))
-            .await;
+        ctx.reset_tick(tick).await;
+        debug!(target: "raft::state",
+            state:serde = self,
+            timeout = "stop",
+            tick:serde = tick;
+            "setup timer"
+        );
     }
 
     async fn request_vote_logic(
@@ -99,11 +110,22 @@ impl State for LeaderState {
                             if resp.term > *higher_term {
                                 *higher_term = resp.term;
                                 notify.notify_one();
+                                return;
                             }
                         }
-                        println!("send heartbeat to peer {}: {:?}", peer_url, resp);
+                        debug!(target: "raft::rpc",
+                            term = resp.term,
+                            peer = peer_url;
+                            "send heartbeat to peer"
+                        );
                     }
-                    Err(e) => println!("call peer {} append_entries(hb) failed: {:?}", peer_url, e),
+                    Err(e) => {
+                        error!(target: "raft::rpc",
+                            error:err = e,
+                            peer = peer_url;
+                            "call peer rpc AppendEntries(hb) error"
+                        );
+                    }
                 }
             }));
         }
@@ -120,6 +142,11 @@ impl State for LeaderState {
 
         let higher_term = *higher_term.lock().await;
         if higher_term > self.term {
+            info!(target: "raft::rpc",
+                term = self.term,
+                new_term = higher_term;
+                "meet higher term, revert to follower"
+            );
             Some(FollowerState::new(higher_term, None))
         } else {
             None

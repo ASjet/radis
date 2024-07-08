@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use super::candidate::CandidateState;
 use super::{
     AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply,
@@ -7,8 +5,11 @@ use super::{
 };
 use super::{LogIndex, PeerID, RaftContext, Role, State, Term};
 use crate::raft::config;
+use log::{debug, info};
+use serde::Serialize;
+use std::sync::Arc;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct FollowerState {
     term: Term,
     follow: Option<PeerID>,
@@ -16,14 +17,6 @@ pub struct FollowerState {
 
 impl FollowerState {
     pub fn new(term: Term, follow: Option<PeerID>) -> Arc<Box<dyn State>> {
-        match &follow {
-            Some(f) => {
-                println!("[{}] following {}", term, f);
-            }
-            None => {
-                println!("[{}] follower without leader", term);
-            }
-        }
         Arc::new(Box::new(Self { term, follow }))
     }
 
@@ -54,12 +47,21 @@ impl State for FollowerState {
         Role::Follower
     }
 
+    fn following(&self) -> Option<PeerID> {
+        self.follow.clone()
+    }
+
     async fn setup_timer(&self, ctx: RaftContext) {
+        let timeout = config::follower_timeout();
         let ctx = ctx.read().await;
-        let dura = config::follower_timeout();
-        ctx.reset_timeout(dura).await;
+        ctx.reset_timeout(timeout).await;
         ctx.stop_tick().await;
-        println!("[{}] After {:?} become candidate...", self.term, dura);
+        debug!(target: "raft::state",
+            state:serde = self,
+            timeout:serde = timeout,
+            tick = "stop";
+            "setup timer"
+        );
     }
 
     async fn request_vote_logic(
@@ -92,10 +94,13 @@ impl State for FollowerState {
         };
 
         if grant {
-            ctx.read()
-                .await
-                .reset_timeout(config::follower_timeout())
-                .await;
+            let timeout = config::follower_timeout();
+            ctx.read().await.reset_timeout(timeout).await;
+            debug!(target: "raft::timer",
+                state:serde = self,
+                timeout:serde = timeout;
+                "reset timeout timer"
+            );
         }
 
         (
@@ -116,7 +121,12 @@ impl State for FollowerState {
             Some(l) if *l == args.leader_id => {
                 // Following this leader
                 // TODO: append entries to context
-                println!("[{}] recv heartbeat", self.term);
+                debug!(target: "raft::rpc",
+                    state:serde = self,
+                    term = args.term,
+                    leader = args.leader_id;
+                    "recv heartbeat"
+                );
                 (true, None)
             }
             Some(_) => {
@@ -133,11 +143,13 @@ impl State for FollowerState {
         };
 
         let reply = if success {
-            ctx.read()
-                .await
-                .reset_timeout(config::follower_timeout())
-                .await;
-            println!("[{}] reset timeout", self.term);
+            let timeout = config::follower_timeout();
+            ctx.read().await.reset_timeout(timeout).await;
+            debug!(target: "raft::timer",
+                state:serde = self,
+                timeout:serde = timeout;
+                "reset timeout timer"
+            );
             if let Some((conflict_term, conflict_index)) = self.handle_entries(ctx, args) {
                 AppendEntriesReply {
                     term: self.term,
@@ -174,7 +186,10 @@ impl State for FollowerState {
     }
 
     async fn on_timeout(&self, _ctx: RaftContext) -> Option<Arc<Box<dyn State>>> {
-        println!("[{}] timeout, become leader", self.term);
+        info!(target: "raft::state",
+            state:serde = self;
+            "follower timeout, become candidate"
+        );
         Some(CandidateState::new(self.term + 1))
     }
 

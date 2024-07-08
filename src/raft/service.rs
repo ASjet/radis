@@ -6,6 +6,7 @@ use super::{
 };
 use super::{Raft, RaftClient};
 use crate::conf::Config;
+use log::{info, trace};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,18 +16,26 @@ use tonic::{Request, Response, Status};
 
 #[derive(Clone)]
 pub struct RaftService {
+    id: String,
     context: Arc<RwLock<Context>>,
     state: Arc<Mutex<Arc<Box<dyn State>>>>,
 }
 
 impl RaftService {
     pub fn new(cfg: Config) -> Self {
+        let id = cfg.id.clone();
         let (timeout_tx, timeout_rx) = mpsc::channel(1);
         let (tick_tx, tick_rx) = mpsc::channel(1);
         let context = Arc::new(RwLock::new(Context::new(cfg, timeout_tx, tick_tx)));
-        let state = Arc::new(Mutex::new(FollowerState::new(0, None)));
+
+        let init_state = FollowerState::new(0, None);
+        info!(target: "raft::state",
+            state:serde = (&init_state as &Box<dyn State>);
+            "init raft state"
+        );
+        let state = Arc::new(Mutex::new(init_state));
         state::handle_timer(state.clone(), context.clone(), timeout_rx, tick_rx);
-        RaftService { context, state }
+        RaftService { id, context, state }
     }
 
     pub fn context(&self) -> Arc<RwLock<Context>> {
@@ -38,6 +47,7 @@ impl RaftService {
     }
 
     pub async fn serve(&self, addr: SocketAddr) -> Result<(), transport::Error> {
+        info!(target: "raft::service", id = self.id; "raft gRPC server listening on {addr}");
         Server::builder()
             .add_service(RaftServer::new(self.clone()))
             .serve(addr)
@@ -51,9 +61,18 @@ impl Raft for RaftService {
         &self,
         request: Request<RequestVoteArgs>,
     ) -> Result<Response<RequestVoteReply>, Status> {
+        let request = request.into_inner();
+        trace!(
+            target: "raft::rpc",
+            term = request.term,
+            candidate_id = request.candidate_id,
+            last_log_index = request.last_log_index,
+            last_log_term = request.last_log_term;
+            "received RequestVote request",
+        );
         let state = self.state.lock().await;
         let (resp, new_state) = state
-            .handle_request_vote(self.context.clone(), request.into_inner())
+            .handle_request_vote(self.context.clone(), request)
             .await;
         state::transition(state, new_state, self.context.clone()).await;
         Ok(Response::new(resp))
@@ -63,9 +82,19 @@ impl Raft for RaftService {
         &self,
         request: Request<AppendEntriesArgs>,
     ) -> Result<Response<AppendEntriesReply>, Status> {
+        let request = request.into_inner();
+        trace!(
+            target: "raft::rpc",
+            term = request.term,
+            leader_id = request.leader_id,
+            prev_log_index = request.prev_log_index,
+            prev_log_term = request.prev_log_term,
+            entries = request.entries.len();
+            "received AppendEntries request",
+        );
         let state = self.state.lock().await;
         let (resp, new_state) = state
-            .handle_append_entries(self.context.clone(), request.into_inner())
+            .handle_append_entries(self.context.clone(), request)
             .await;
         state::transition(state, new_state, self.context.clone()).await;
         Ok(Response::new(resp))
@@ -75,9 +104,19 @@ impl Raft for RaftService {
         &self,
         request: Request<InstallSnapshotArgs>,
     ) -> Result<Response<InstallSnapshotReply>, Status> {
+        let request = request.into_inner();
+        trace!(
+            target: "raft::rpc",
+            term = request.term,
+            leader_id = request.leader_id,
+            last_included_index = request.last_included_index,
+            last_included_term = request.last_included_term,
+            snapshot_size = request.snapshot.len();
+            "received InstallSnapshot request",
+        );
         let state = self.state.lock().await;
         let (resp, new_state) = state
-            .handle_install_snapshot(self.context.clone(), request.into_inner())
+            .handle_install_snapshot(self.context.clone(), request)
             .await;
         state::transition(state, new_state, self.context.clone()).await;
         Ok(Response::new(resp))
@@ -110,6 +149,10 @@ impl PeerClient {
                 .map_err(|e| Status::unavailable(e.to_string()))?;
             // Once connect() returns successfully, the connection
             // reliability is handled by the underlying gRPC library.
+            info!(target: "raft::rpc",
+                peer_addr = self.endpoint.uri().to_string();
+                "connected to peer"
+            );
             self.cli = Some(RaftClient::new(channel));
         }
 
