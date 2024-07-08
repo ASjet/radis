@@ -2,6 +2,7 @@ use super::config::REQUEST_TIMEOUT;
 use super::service::PeerClient;
 use crate::conf::Config;
 use crate::timer::{OneshotTimer, PeriodicTimer};
+use log::debug;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::Sender;
@@ -32,7 +33,16 @@ impl Context {
             id,
             peers: peer_addrs
                 .iter()
-                .map(|addr| Arc::new(Mutex::new(PeerClient::new(addr, timeout))))
+                .enumerate()
+                .map(|(i, addr)| {
+                    debug!(target: "raft::context",
+                        peer_index = i,
+                        peer_addr = addr,
+                        timeout:serde = timeout;
+                        "init peer client"
+                    );
+                    Arc::new(Mutex::new(PeerClient::new(addr, timeout)))
+                })
                 .collect(),
             timeout: Arc::new(OneshotTimer::new(timeout_event)),
             tick: Arc::new(PeriodicTimer::new(tick_event)),
@@ -43,9 +53,11 @@ impl Context {
         let timeout = self.timeout.clone();
         let tick = self.tick.clone();
         tokio::spawn(async move {
+            debug!(target: "raft::context", timer = "timeout"; "start timer");
             timeout.start().await;
         });
         tokio::spawn(async move {
+            debug!(target: "raft::context", timer = "tick"; "start timer");
             tick.start().await;
         });
     }
