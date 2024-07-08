@@ -1,17 +1,19 @@
 use super::context::Context;
 use super::state::{self, FollowerState, State};
 use super::{
-    AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply,
+    AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply, RaftServer,
     RequestVoteArgs, RequestVoteReply,
 };
 use super::{Raft, RaftClient};
 use crate::conf::Config;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex, RwLock};
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::{self, Channel, Endpoint, Server};
 use tonic::{Request, Response, Status};
 
+#[derive(Clone)]
 pub struct RaftService {
     context: Arc<RwLock<Context>>,
     state: Arc<Mutex<Arc<Box<dyn State>>>>,
@@ -33,6 +35,13 @@ impl RaftService {
 
     pub fn state(&self) -> Arc<Mutex<Arc<Box<dyn State>>>> {
         self.state.clone()
+    }
+
+    pub async fn serve(&self, addr: SocketAddr) -> Result<(), transport::Error> {
+        Server::builder()
+            .add_service(RaftServer::new(self.clone()))
+            .serve(addr)
+            .await
     }
 }
 
