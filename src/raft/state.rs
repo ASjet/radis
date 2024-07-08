@@ -29,7 +29,9 @@ pub trait State: Sync + Send + Debug {
     fn term(&self) -> Term;
     fn role(&self) -> Role;
     async fn setup_timer(&self, ctx: RaftContext);
+    /// Call with holding the lock of state
     async fn on_timeout(&self, ctx: RaftContext) -> Option<Arc<Box<dyn State>>>;
+    /// Call without holding the lock of state
     async fn on_tick(&self, ctx: RaftContext) -> Option<Arc<Box<dyn State>>>;
 
     async fn request_vote_logic(
@@ -143,12 +145,9 @@ pub fn handle_timer(
                     let ctx = ctx.clone();
                     let state = state.clone();
                     tokio::spawn(async move {
-                        let s = state.lock().await.clone();
-                        let new_state = s.on_timeout(ctx.clone()).await;
-                        let guard = state.lock().await;
-                        if s.term() == guard.term() && s.role() == guard.role() {
-                            transition(guard, new_state, ctx.clone()).await;
-                        }
+                        let state = state.lock().await;
+                        let new_state = state.on_timeout(ctx.clone()).await;
+                        transition(state, new_state, ctx.clone()).await;
                     });
                 }
                 _ = tick_rx.recv() => {

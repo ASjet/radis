@@ -86,6 +86,7 @@ impl PeriodicTimer {
         }
     }
 
+    /// This will cause the timer to tick immediately
     pub async fn start(&self) {
         loop {
             let mut timer = self.timer.lock().await;
@@ -98,7 +99,6 @@ impl PeriodicTimer {
                 interval = reset_rx.recv() => {
                     if let Some(interval) = interval {
                         timer.start(interval);
-                        // This will cause the timer to fire immediately
                     }
                 }
                 _ = cancel_rx.recv() => {
