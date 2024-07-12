@@ -6,12 +6,12 @@ use super::{
 };
 use super::{Raft, RaftClient};
 use crate::conf::Config;
+use anyhow::Result;
 use log::{info, trace};
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex, RwLock};
-use tonic::transport::{self, Channel, Endpoint, Server};
+use tonic::transport::{Channel, Endpoint, Server};
 use tonic::{Request, Response, Status};
 
 #[derive(Clone)]
@@ -19,11 +19,13 @@ pub struct RaftService {
     id: String,
     context: Arc<RwLock<Context>>,
     state: Arc<Mutex<Arc<Box<dyn State>>>>,
+    listen_addr: String,
 }
 
 impl RaftService {
     pub fn new(cfg: Config) -> Self {
         let id = cfg.id.clone();
+        let listen_addr = cfg.listen_addr.clone();
         let (timeout_tx, timeout_rx) = mpsc::channel(1);
         let (tick_tx, tick_rx) = mpsc::channel(1);
         let context = Arc::new(RwLock::new(Context::new(cfg, timeout_tx, tick_tx)));
@@ -35,7 +37,12 @@ impl RaftService {
         );
         let state = Arc::new(Mutex::new(init_state));
         state::handle_timer(state.clone(), context.clone(), timeout_rx, tick_rx);
-        RaftService { id, context, state }
+        RaftService {
+            id,
+            context,
+            state,
+            listen_addr,
+        }
     }
 
     pub fn context(&self) -> Arc<RwLock<Context>> {
@@ -46,12 +53,14 @@ impl RaftService {
         self.state.clone()
     }
 
-    pub async fn serve(&self, addr: SocketAddr) -> Result<(), transport::Error> {
+    pub async fn serve(&self) -> Result<()> {
+        let addr = self.listen_addr.parse()?;
         info!(target: "raft::service", id = self.id; "raft gRPC server listening on {addr}");
         Server::builder()
             .add_service(RaftServer::new(self.clone()))
             .serve(addr)
-            .await
+            .await?;
+        Ok(())
     }
 }
 
