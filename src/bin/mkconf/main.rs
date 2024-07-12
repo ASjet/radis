@@ -37,37 +37,22 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    for id in 0..args.peers {
-        let name = make_node_name(&args.prefix, id);
-        let (path, filename) = if args.sub_dir {
-            (format!("{}/{}", &args.dir, &name), "conf.toml".into())
-        } else {
-            (args.dir.clone(), format!("{}.toml", &name))
-        };
-
-        let cfg = Config {
-            id: name,
-            listen_addr: join_host_port(&args.host, args.port + id as u16),
-            peer_addrs: make_peer_addrs(&args.peer_host, args.port, args.peers, id),
-        };
-        let cfg = toml::to_string_pretty(&cfg).unwrap();
-
-        fs::create_dir_all(&path).unwrap();
-        fs::write(format!("{}/{}", &path, &filename), cfg.as_bytes()).unwrap();
-    }
-}
-
-fn join_host_port(host: &str, port: u16) -> String {
-    format!("{}:{}", host, port)
-}
-
-fn make_node_name(prefix: &str, id: i32) -> String {
-    format!("{}{}", prefix, id)
-}
-
-fn make_peer_addrs(host: &str, base_port: u16, n_peer: i32, id: i32) -> Vec<String> {
-    (0..n_peer)
-        .filter(|peer| *peer != id)
-        .map(|peer| join_host_port(host, base_port + peer as u16))
-        .collect()
+    Config::builder()
+        .listen_host(&args.host)
+        .peer_host(&args.peer_host)
+        .base_port(args.port)
+        .name_prefix(&args.prefix)
+        .peers(args.peers)
+        .build()
+        .iter()
+        .for_each(|cfg| {
+            let (path, filename) = if args.sub_dir {
+                (format!("{}/{}", &args.dir, &cfg.id), "conf.toml".into())
+            } else {
+                (args.dir.clone(), format!("{}.toml", &cfg.id))
+            };
+            let cfg = toml::to_string_pretty(&cfg).unwrap();
+            fs::create_dir_all(&path).unwrap();
+            fs::write(format!("{}/{}", &path, &filename), cfg.as_bytes()).unwrap();
+        });
 }

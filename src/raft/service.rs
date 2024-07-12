@@ -1,41 +1,39 @@
 use super::context::Context;
-use super::state::{self, FollowerState, State};
+use super::state::{self, State};
 use super::{
     AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply, RaftServer,
     RequestVoteArgs, RequestVoteReply,
 };
 use super::{Raft, RaftClient};
 use crate::conf::Config;
+use anyhow::Result;
 use log::{info, trace};
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Mutex, RwLock};
-use tonic::transport::{self, Channel, Endpoint, Server};
+use tokio::sync::{Mutex, RwLock};
+use tonic::transport::{Channel, Endpoint, Server};
 use tonic::{Request, Response, Status};
 
 #[derive(Clone)]
 pub struct RaftService {
     id: String,
+    listen_addr: String,
     context: Arc<RwLock<Context>>,
     state: Arc<Mutex<Arc<Box<dyn State>>>>,
 }
 
 impl RaftService {
     pub fn new(cfg: Config) -> Self {
-        let id = cfg.id.clone();
-        let (timeout_tx, timeout_rx) = mpsc::channel(1);
-        let (tick_tx, tick_rx) = mpsc::channel(1);
-        let context = Arc::new(RwLock::new(Context::new(cfg, timeout_tx, tick_tx)));
-
-        let init_state = FollowerState::new(0, None);
-        info!(target: "raft::state",
-            state:serde = (&init_state as &Box<dyn State>);
-            "init raft state"
-        );
-        let state = Arc::new(Mutex::new(init_state));
-        state::handle_timer(state.clone(), context.clone(), timeout_rx, tick_rx);
-        RaftService { id, context, state }
+        let Config {
+            id, listen_addr, ..
+        } = cfg.clone();
+        let (context, state) = state::init(cfg);
+        RaftService {
+            id,
+            listen_addr,
+            context,
+            state,
+        }
     }
 
     pub fn context(&self) -> Arc<RwLock<Context>> {
@@ -46,12 +44,27 @@ impl RaftService {
         self.state.clone()
     }
 
-    pub async fn serve(&self, addr: SocketAddr) -> Result<(), transport::Error> {
+    pub async fn serve(&self) -> Result<()> {
+        let addr = self.listen_addr.parse()?;
         info!(target: "raft::service", id = self.id; "raft gRPC server listening on {addr}");
         Server::builder()
             .add_service(RaftServer::new(self.clone()))
             .serve(addr)
-            .await
+            .await?;
+        Ok(())
+    }
+
+    pub async fn serve_with_shutdown<F: std::future::Future<Output = ()>>(
+        &self,
+        f: F,
+    ) -> Result<()> {
+        let addr = self.listen_addr.parse()?;
+        info!(target: "raft::service", id = self.id; "raft gRPC server listening on {addr}");
+        Server::builder()
+            .add_service(RaftServer::new(self.clone()))
+            .serve_with_shutdown(addr, f)
+            .await?;
+        Ok(())
     }
 }
 

@@ -17,10 +17,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::parse();
     let cfg = Config::from_path(&args.conf)?;
-    let addr = cfg.listen_addr.parse()?;
 
-    let srv = RaftService::new(cfg);
-    srv.serve(addr).await?;
+    RaftService::new(cfg).serve().await?;
 
     Ok(())
 }

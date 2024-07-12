@@ -197,3 +197,73 @@ impl State for FollowerState {
         None
     }
 }
+
+#[tokio::test]
+async fn vote_request() {
+    let (ctx, state) = super::init(super::Config::builder().peers(1).build().pop().unwrap());
+    let state = state.lock().await;
+
+    assert_eq!(state.term(), 0);
+
+    // RequestVote from a candidate with higher term
+    let candidate1 = "update_candidate".to_string();
+    let (reply, new_state) = state
+        .handle_request_vote(
+            ctx.clone(),
+            RequestVoteArgs {
+                term: 2,
+                candidate_id: candidate1.clone(),
+                last_log_index: 0,
+                last_log_term: 0,
+            },
+        )
+        .await;
+    assert_eq!(
+        RequestVoteReply {
+            term: 2,
+            granted: true
+        },
+        reply
+    );
+    let new_state = new_state.unwrap();
+    assert_eq!(Role::Follower, new_state.role());
+    assert_eq!(2 as Term, new_state.term());
+    assert_eq!(Some(candidate1), new_state.following());
+}
+
+#[tokio::test]
+async fn append_entries() {
+    let (ctx, state) = super::init(super::Config::builder().peers(1).build().pop().unwrap());
+    let state = state.lock().await;
+
+    assert_eq!(state.term(), 0);
+
+    // AppendEntries from a candidate with higher term
+    let leader1 = "update_leader".to_string();
+    let (reply, new_state) = state
+        .handle_append_entries(
+            ctx.clone(),
+            AppendEntriesArgs {
+                term: 2,
+                leader_id: leader1.clone(),
+                prev_log_index: 0,
+                prev_log_term: 0,
+                leader_commit: 0,
+                entries: vec![],
+            },
+        )
+        .await;
+    assert_eq!(
+        AppendEntriesReply {
+            term: 2,
+            success: true,
+            conflict_index: 0,
+            conflict_term: 0,
+        },
+        reply
+    );
+    let new_state = new_state.unwrap();
+    assert_eq!(Role::Follower, new_state.role());
+    assert_eq!(2 as Term, new_state.term());
+    assert_eq!(Some(leader1), new_state.following());
+}

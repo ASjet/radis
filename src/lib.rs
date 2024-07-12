@@ -9,7 +9,7 @@ pub mod raft {
     mod config;
     mod context;
     mod service;
-    mod state;
+    pub mod state;
 
     pub use service::RaftService;
 }
