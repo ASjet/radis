@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use tokio::time::sleep;
 
 #[tokio::test]
-async fn test_oneshot_start() {
+async fn oneshot_start() {
     let (fire_tx, mut fire_rx) = mpsc::channel(1);
 
     let timer = Arc::new(OneshotTimer::new(fire_tx));
@@ -22,7 +22,7 @@ async fn test_oneshot_start() {
 }
 
 #[tokio::test]
-async fn test_oneshot_reset() {
+async fn oneshot_reset() {
     let (fire_tx, mut fire_rx) = mpsc::channel(1);
 
     let timer = Arc::new(OneshotTimer::new(fire_tx));
@@ -50,7 +50,7 @@ async fn test_oneshot_reset() {
 }
 
 #[tokio::test]
-async fn test_oneshot_cancel() {
+async fn oneshot_cancel() {
     let (fire_tx, mut fire_rx) = mpsc::channel(1);
 
     let timer = Arc::new(OneshotTimer::new(fire_tx));
@@ -69,7 +69,7 @@ async fn test_oneshot_cancel() {
 }
 
 #[tokio::test]
-async fn test_periodict_start() {
+async fn periodict_start() {
     let (fire_tx, mut fire_rx) = mpsc::channel(1);
 
     let timer = Arc::new(PeriodicTimer::new(fire_tx));
@@ -93,7 +93,7 @@ async fn test_periodict_start() {
 }
 
 #[tokio::test]
-async fn test_periodict_reset() {
+async fn periodict_reset() {
     let (fire_tx, mut fire_rx) = mpsc::channel(1);
 
     let timer = Arc::new(PeriodicTimer::new(fire_tx));
@@ -129,7 +129,7 @@ async fn test_periodict_reset() {
 }
 
 #[tokio::test]
-async fn test_periodict_stop() {
+async fn periodict_stop() {
     let (fire_tx, mut fire_rx) = mpsc::channel(1);
 
     let timer = Arc::new(PeriodicTimer::new(fire_tx));
