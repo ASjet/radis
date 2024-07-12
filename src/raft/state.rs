@@ -264,3 +264,72 @@ fn handle_timer(
         }
     });
 }
+
+#[tokio::test]
+async fn reject_lower_term() {
+    let (ctx, _) = init(Config::builder().peers(1).build().pop().unwrap());
+    let state = FollowerState::new(2, None);
+
+    assert_eq!(2, state.term());
+
+    let peer = "test".to_string();
+
+    let (reply, new_state) = state
+        .handle_request_vote(
+            ctx.clone(),
+            RequestVoteArgs {
+                term: 1,
+                candidate_id: peer.clone(),
+                last_log_index: 0,
+                last_log_term: 0,
+            },
+        )
+        .await;
+    assert_eq!(
+        RequestVoteReply {
+            term: 2,
+            granted: false
+        },
+        reply
+    );
+    assert!(new_state.is_none());
+
+    let (reply, new_state) = state
+        .handle_append_entries(
+            ctx.clone(),
+            AppendEntriesArgs {
+                term: 1,
+                leader_id: peer.clone(),
+                prev_log_index: 0,
+                prev_log_term: 0,
+                leader_commit: 0,
+                entries: vec![],
+            },
+        )
+        .await;
+    assert_eq!(
+        AppendEntriesReply {
+            term: 2,
+            success: false,
+            conflict_index: 0,
+            conflict_term: 0,
+        },
+        reply
+    );
+    assert!(new_state.is_none());
+
+    let (reply, new_state) = state
+        .handle_install_snapshot(
+            ctx.clone(),
+            InstallSnapshotArgs {
+                term: 1,
+                leader_id: peer.clone(),
+                last_included_index: 0,
+                last_included_term: 0,
+                snapshot: vec![],
+            },
+        )
+        .await;
+    assert_eq!(InstallSnapshotReply { term: 2 }, reply);
+    assert!(new_state.is_none());
+}
