@@ -1,5 +1,5 @@
 use super::context::Context;
-use super::state::{self, FollowerState, State};
+use super::state::{self, State};
 use super::{
     AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply, RaftServer,
     RequestVoteArgs, RequestVoteReply,
@@ -10,38 +10,29 @@ use anyhow::Result;
 use log::{info, trace};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock};
 use tonic::transport::{Channel, Endpoint, Server};
 use tonic::{Request, Response, Status};
 
 #[derive(Clone)]
 pub struct RaftService {
     id: String,
+    listen_addr: String,
     context: Arc<RwLock<Context>>,
     state: Arc<Mutex<Arc<Box<dyn State>>>>,
-    listen_addr: String,
 }
 
 impl RaftService {
     pub fn new(cfg: Config) -> Self {
-        let id = cfg.id.clone();
-        let listen_addr = cfg.listen_addr.clone();
-        let (timeout_tx, timeout_rx) = mpsc::channel(1);
-        let (tick_tx, tick_rx) = mpsc::channel(1);
-        let context = Arc::new(RwLock::new(Context::new(cfg, timeout_tx, tick_tx)));
-
-        let init_state = FollowerState::new(0, None);
-        info!(target: "raft::state",
-            state:serde = (&init_state as &Box<dyn State>);
-            "init raft state"
-        );
-        let state = Arc::new(Mutex::new(init_state));
-        state::handle_timer(state.clone(), context.clone(), timeout_rx, tick_rx);
+        let Config {
+            id, listen_addr, ..
+        } = cfg.clone();
+        let (context, state) = state::init(cfg);
         RaftService {
             id,
+            listen_addr,
             context,
             state,
-            listen_addr,
         }
     }
 

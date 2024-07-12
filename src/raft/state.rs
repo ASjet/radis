@@ -4,6 +4,7 @@ use super::{
     AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply,
     RequestVoteArgs, RequestVoteReply,
 };
+use crate::conf::Config;
 use log::{debug, info};
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
@@ -186,7 +187,38 @@ impl Serialize for Box<dyn State> {
     }
 }
 
-pub fn handle_timer(
+pub fn init(cfg: Config) -> (Arc<RwLock<Context>>, Arc<Mutex<Arc<Box<dyn State>>>>) {
+    let (timeout_tx, timeout_rx) = mpsc::channel(1);
+    let (tick_tx, tick_rx) = mpsc::channel(1);
+    let context = Arc::new(RwLock::new(Context::new(cfg, timeout_tx, tick_tx)));
+
+    let init_state = FollowerState::new(0, None);
+    info!(target: "raft::state",
+        state:serde = (&init_state as &Box<dyn State>);
+        "init raft state"
+    );
+    let state = Arc::new(Mutex::new(init_state));
+    handle_timer(state.clone(), context.clone(), timeout_rx, tick_rx);
+    (context, state)
+}
+
+pub async fn transition<'a>(
+    mut state: MutexGuard<'a, Arc<Box<dyn State>>>,
+    new_state: Option<Arc<Box<dyn State>>>,
+    ctx: Arc<RwLock<Context>>,
+) {
+    if let Some(new_state) = new_state {
+        info!(target: "raft::state",
+            old_state:serde = (&*state as &Box<dyn State>),
+            new_state:serde = (&new_state as &Box<dyn State>);
+            "state transition occurred"
+        );
+        *state = new_state;
+        state.setup_timer(ctx).await;
+    }
+}
+
+fn handle_timer(
     state: Arc<Mutex<Arc<Box<dyn State>>>>,
     ctx: Arc<RwLock<Context>>,
     mut timeout_rx: mpsc::Receiver<()>,
@@ -231,20 +263,4 @@ pub fn handle_timer(
             }
         }
     });
-}
-
-pub async fn transition<'a>(
-    mut state: MutexGuard<'a, Arc<Box<dyn State>>>,
-    new_state: Option<Arc<Box<dyn State>>>,
-    ctx: Arc<RwLock<Context>>,
-) {
-    if let Some(new_state) = new_state {
-        info!(target: "raft::state",
-            old_state:serde = (&*state as &Box<dyn State>),
-            new_state:serde = (&new_state as &Box<dyn State>);
-            "state transition occurred"
-        );
-        *state = new_state;
-        state.setup_timer(ctx).await;
-    }
 }
