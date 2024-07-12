@@ -62,6 +62,19 @@ impl RaftService {
             .await?;
         Ok(())
     }
+
+    pub async fn serve_with_shutdown<F: std::future::Future<Output = ()>>(
+        &self,
+        f: F,
+    ) -> Result<()> {
+        let addr = self.listen_addr.parse()?;
+        info!(target: "raft::service", id = self.id; "raft gRPC server listening on {addr}");
+        Server::builder()
+            .add_service(RaftServer::new(self.clone()))
+            .serve_with_shutdown(addr, f)
+            .await?;
+        Ok(())
+    }
 }
 
 #[tonic::async_trait]
