@@ -10,7 +10,7 @@ use anyhow::Result;
 use log::{info, trace};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tonic::transport::{Channel, Endpoint, Server};
 use tonic::{Request, Response, Status};
 
@@ -20,6 +20,8 @@ pub struct RaftService {
     listen_addr: String,
     context: Arc<RwLock<Context>>,
     state: Arc<Mutex<Arc<Box<dyn State>>>>,
+
+    close_ch: Arc<Mutex<Option<mpsc::Sender<()>>>>,
 }
 
 impl RaftService {
@@ -33,6 +35,7 @@ impl RaftService {
             listen_addr,
             context,
             state,
+            close_ch: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -45,26 +48,26 @@ impl RaftService {
     }
 
     pub async fn serve(&self) -> Result<()> {
+        let (close_tx, mut close_rx) = mpsc::channel::<()>(1);
+        *self.close_ch.lock().await = Some(close_tx);
         let addr = self.listen_addr.parse()?;
         info!(target: "raft::service", id = self.id; "raft gRPC server listening on {addr}");
         Server::builder()
             .add_service(RaftServer::new(self.clone()))
-            .serve(addr)
+            .serve_with_shutdown(addr, async move {
+                close_rx.recv().await;
+            })
             .await?;
         Ok(())
     }
 
-    pub async fn serve_with_shutdown<F: std::future::Future<Output = ()>>(
-        &self,
-        f: F,
-    ) -> Result<()> {
-        let addr = self.listen_addr.parse()?;
-        info!(target: "raft::service", id = self.id; "raft gRPC server listening on {addr}");
-        Server::builder()
-            .add_service(RaftServer::new(self.clone()))
-            .serve_with_shutdown(addr, f)
-            .await?;
-        Ok(())
+    pub async fn close(&self) {
+        if let Some(ch) = self.close_ch.lock().await.take() {
+            ch.send(()).await.unwrap();
+        }
+        let ctx = self.context.read().await;
+        ctx.cancel_timeout().await;
+        ctx.stop_tick().await;
     }
 }
 
