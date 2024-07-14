@@ -38,7 +38,7 @@ impl State for CandidateState {
         None
     }
 
-    async fn setup_timer(&self, ctx: RaftContext) {
+    async fn setup(&self, ctx: RaftContext) {
         let timeout = config::candidate_timeout();
         let tick = Duration::from_millis(config::REQUEST_VOTE_INTERVAL as u64);
         let ctx = ctx.read().await;

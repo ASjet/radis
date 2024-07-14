@@ -36,7 +36,7 @@ impl State for LeaderState {
         None
     }
 
-    async fn setup_timer(&self, ctx: RaftContext) {
+    async fn setup(&self, ctx: RaftContext) {
         let tick = Duration::from_millis(config::HEARTBEAT_INTERVAL as u64);
         let ctx = ctx.read().await;
         ctx.cancel_timeout().await;

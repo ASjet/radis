@@ -51,7 +51,7 @@ impl State for FollowerState {
         self.follow.clone()
     }
 
-    async fn setup_timer(&self, ctx: RaftContext) {
+    async fn setup(&self, ctx: RaftContext) {
         let timeout = config::follower_timeout();
         let ctx = ctx.read().await;
         ctx.reset_timeout(timeout).await;

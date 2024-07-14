@@ -33,7 +33,7 @@ pub trait State: Sync + Send + Debug {
     fn term(&self) -> Term;
     fn role(&self) -> Role;
     fn following(&self) -> Option<PeerID>;
-    async fn setup_timer(&self, ctx: RaftContext);
+    async fn setup(&self, ctx: RaftContext);
     /// Call with holding the lock of state
     async fn on_timeout(&self, ctx: RaftContext) -> Option<Arc<Box<dyn State>>>;
     /// Call without holding the lock of state
@@ -214,7 +214,7 @@ pub async fn transition<'a>(
             "state transition occurred"
         );
         *state = new_state;
-        state.setup_timer(ctx).await;
+        state.setup(ctx).await;
     }
 }
 
@@ -226,7 +226,7 @@ fn handle_timer(
 ) {
     tokio::spawn(async move {
         ctx.read().await.init_timer().await;
-        state.lock().await.setup_timer(ctx.clone()).await;
+        state.lock().await.setup(ctx.clone()).await;
         loop {
             tokio::select! {
                 _ = timeout_rx.recv() => {
