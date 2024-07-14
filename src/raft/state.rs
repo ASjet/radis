@@ -38,6 +38,12 @@ pub trait State: Sync + Send + Debug {
     async fn on_timeout(&self, ctx: RaftContext) -> Option<Arc<Box<dyn State>>>;
     /// Call without holding the lock of state
     async fn on_tick(&self, ctx: RaftContext) -> Option<Arc<Box<dyn State>>>;
+    /// Append new command
+    async fn on_command(
+        &self,
+        ctx: RaftContext,
+        cmd: Vec<u8>,
+    ) -> anyhow::Result<Option<Arc<Box<dyn State>>>>;
 
     async fn request_vote_logic(
         &self,
@@ -206,7 +212,7 @@ pub async fn transition<'a>(
     mut state: MutexGuard<'a, Arc<Box<dyn State>>>,
     new_state: Option<Arc<Box<dyn State>>>,
     ctx: Arc<RwLock<Context>>,
-) {
+) -> bool {
     if let Some(new_state) = new_state {
         info!(target: "raft::state",
             old_state:serde = (&*state as &Box<dyn State>),
@@ -215,7 +221,9 @@ pub async fn transition<'a>(
         );
         *state = new_state;
         state.setup(ctx).await;
+        return true;
     }
+    false
 }
 
 fn handle_timer(

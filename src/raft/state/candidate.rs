@@ -4,7 +4,7 @@ use super::{
     AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply,
     RequestVoteArgs, RequestVoteReply,
 };
-use super::{PeerID, RaftContext, Role, State, Term};
+use super::{LogIndex, PeerID, RaftContext, Role, State, Term};
 use crate::raft::config;
 use futures::future;
 use log::{debug, error, info};
@@ -50,6 +50,14 @@ impl State for CandidateState {
             tick:serde = tick;
             "setup timer"
         );
+    }
+
+    async fn on_command(
+        &self,
+        _ctx: RaftContext,
+        _cmd: Vec<u8>,
+    ) -> anyhow::Result<Option<Arc<Box<dyn State>>>> {
+        Err(anyhow::anyhow!("not leader"))
     }
 
     async fn request_vote_logic(

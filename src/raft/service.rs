@@ -1,4 +1,4 @@
-use super::context::Context;
+use super::context::{Context, LogIndex};
 use super::state::{self, State};
 use super::{
     AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply, RaftServer,
@@ -45,6 +45,16 @@ impl RaftService {
 
     pub fn state(&self) -> Arc<Mutex<Arc<Box<dyn State>>>> {
         self.state.clone()
+    }
+
+    pub async fn append_command(&self, cmd: Vec<u8>) -> Result<()> {
+        let state = self.state.lock().await;
+        let new_state = state.on_command(self.context.clone(), cmd).await?;
+        if state::transition(state, new_state, self.context.clone()).await {
+            Err(anyhow::anyhow!("not leader"))
+        } else {
+            Ok(())
+        }
     }
 
     pub async fn serve(&self) -> Result<()> {

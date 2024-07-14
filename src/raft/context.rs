@@ -1,8 +1,10 @@
 use super::config::REQUEST_TIMEOUT;
+use super::log::LogManager;
 use super::service::PeerClient;
 use crate::conf::Config;
 use crate::timer::{OneshotTimer, PeriodicTimer};
 use log::debug;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::Sender;
@@ -16,6 +18,10 @@ pub struct Context {
     id: String,
     peers: Vec<Arc<Mutex<PeerClient>>>,
 
+    log: LogManager,
+    peer_next_index: Vec<AtomicU64>,
+    peer_commit_index: Vec<AtomicU64>,
+
     timeout: Arc<OneshotTimer>,
     tick: Arc<PeriodicTimer>,
 }
@@ -28,6 +34,7 @@ impl Context {
             listen_addr: _,
             peer_addrs,
         } = cfg;
+        let peers = peer_addrs.len();
 
         Self {
             id,
@@ -44,6 +51,11 @@ impl Context {
                     Arc::new(Mutex::new(PeerClient::new(addr, timeout)))
                 })
                 .collect(),
+
+            log: LogManager::new(),
+            peer_next_index: (0..peers).map(|_| AtomicU64::new(0)).collect(),
+            peer_commit_index: (0..peers).map(|_| AtomicU64::new(0)).collect(),
+
             timeout: Arc::new(OneshotTimer::new(timeout_event)),
             tick: Arc::new(PeriodicTimer::new(tick_event)),
         }
@@ -92,5 +104,21 @@ impl Context {
 
     pub async fn stop_tick(&self) {
         self.tick.stop().await;
+    }
+
+    pub fn log(&self) -> &LogManager {
+        &self.log
+    }
+
+    pub fn log_mut(&mut self) -> &mut LogManager {
+        &mut self.log
+    }
+
+    pub fn peer_next_index(&self, peer: Peer) -> &AtomicU64 {
+        &self.peer_next_index[peer]
+    }
+
+    pub fn peer_commit_index(&self, peer: Peer) -> &AtomicU64 {
+        &self.peer_commit_index[peer]
     }
 }

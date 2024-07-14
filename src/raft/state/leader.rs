@@ -2,7 +2,7 @@ use super::{
     AppendEntriesArgs, AppendEntriesReply, FollowerState, InstallSnapshotArgs,
     InstallSnapshotReply, RequestVoteArgs, RequestVoteReply,
 };
-use super::{PeerID, RaftContext, Role, State, Term};
+use super::{LogIndex, PeerID, RaftContext, Role, State, Term};
 use crate::raft::config;
 use futures::future;
 use log::{debug, error, info};
@@ -47,6 +47,14 @@ impl State for LeaderState {
             tick:serde = tick;
             "setup timer"
         );
+    }
+
+    async fn on_command(
+        &self,
+        ctx: RaftContext,
+        cmd: Vec<u8>,
+    ) -> anyhow::Result<Option<Arc<Box<dyn State>>>> {
+        Ok(None)
     }
 
     async fn request_vote_logic(

@@ -8,6 +8,7 @@ pub mod raft {
 
     mod config;
     mod context;
+    mod log;
     mod service;
     pub mod state;
 
