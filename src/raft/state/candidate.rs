@@ -38,7 +38,7 @@ impl State for CandidateState {
         None
     }
 
-    async fn setup_timer(&self, ctx: RaftContext) {
+    async fn setup(&self, ctx: RaftContext) {
         let timeout = config::candidate_timeout();
         let tick = Duration::from_millis(config::REQUEST_VOTE_INTERVAL as u64);
         let ctx = ctx.read().await;
@@ -50,6 +50,14 @@ impl State for CandidateState {
             tick:serde = tick;
             "setup timer"
         );
+    }
+
+    async fn on_command(
+        &self,
+        _ctx: RaftContext,
+        _cmd: Vec<u8>,
+    ) -> anyhow::Result<Option<Arc<Box<dyn State>>>> {
+        Err(anyhow::anyhow!("not leader"))
     }
 
     async fn request_vote_logic(
@@ -68,7 +76,7 @@ impl State for CandidateState {
 
     async fn append_entries_logic(
         &self,
-        _ctx: RaftContext,
+        ctx: RaftContext,
         args: AppendEntriesArgs,
     ) -> (AppendEntriesReply, Option<Arc<Box<dyn State>>>) {
         info!(target: "raft::state",
@@ -76,14 +84,10 @@ impl State for CandidateState {
             leader = args.leader_id;
             "other peer won current election, revert to follower"
         );
+        let new_state = FollowerState::new(args.term.clone(), Some(args.leader_id.clone()));
         (
-            AppendEntriesReply {
-                term: self.term,
-                success: true,
-                conflict_term: 0,
-                conflict_index: 0,
-            },
-            Some(FollowerState::new(args.term, Some(args.leader_id))),
+            new_state.handle_append_entries(ctx, args).await.0,
+            Some(new_state),
         )
     }
 
@@ -133,6 +137,7 @@ impl State for CandidateState {
                 let peer_url = peer_cli.lock().await.url();
                 match resp {
                     Ok(resp) => {
+                        // TODO: prefetch peer next index
                         debug!(target: "raft::rpc",
                             term = resp.term,
                             peer = peer_url,

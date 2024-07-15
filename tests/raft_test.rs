@@ -1,91 +1,195 @@
 use radis::conf::Config;
 use radis::raft::state;
 use radis::raft::RaftService;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 
-struct ServiceHandler {
-    service: RaftService,
-    close_ch: mpsc::Sender<()>,
+#[tokio::test]
+async fn leader_election() {
+    let mut ctl = Controller::new(3, 50000);
+    ctl.serve_all().await;
+
+    // Wait for establishing agreement on one leader
+    sleep(Duration::from_millis(1000)).await;
+
+    let (followers, candidates, leader_cnt) = ctl.count_roles().await;
+    // There should be only one leader, and all others are followers
+    assert_eq!(followers, 2);
+    assert_eq!(candidates, 0);
+    assert_eq!(leader_cnt, 1);
+
+    ctl.close_all().await;
+    // Wait for all connections to finish
+    sleep(Duration::from_millis(500)).await;
 }
 
-impl ServiceHandler {
-    #[allow(dead_code)]
-    async fn serve(&self) {
-        self.service.serve().await.unwrap();
-    }
+#[tokio::test]
+async fn fail_over() {
+    let mut ctl = Controller::new(3, 50003);
+    ctl.serve_all().await;
 
-    async fn close(&self) {
-        self.close_ch.send(()).await.unwrap();
-    }
+    // Wait for establishing agreement on one leader
+    sleep(Duration::from_millis(1000)).await;
 
-    async fn role(&self) -> state::Role {
-        self.service.state().lock().await.role()
-    }
+    let (followers, candidates, leader_cnt) = ctl.count_roles().await;
+    // There should be only one leader, and all others are followers
+    assert_eq!(followers, 2);
+    assert_eq!(candidates, 0);
+    assert_eq!(leader_cnt, 1);
+
+    // Leader offline
+    let old_leader = ctl.leader().await.unwrap();
+    let old_term = ctl.term(old_leader).await;
+    ctl.close(old_leader).await;
+
+    // Wait for one follower timeout and start new election
+    sleep(Duration::from_millis(1000)).await;
+
+    let (followers, candidates, leader_cnt) = ctl.count_roles().await;
+    // There should be a new leader got elected
+    assert_eq!(followers, 1);
+    assert_eq!(candidates, 0);
+    assert_eq!(leader_cnt, 2); // New leader plus old leader
+
+    // Old leader back online
+    ctl.serve(old_leader).await;
+    ctl.setup_timer(old_leader).await;
+
+    // Wait for re-establishing agreement on new leader
+    sleep(Duration::from_millis(1000)).await;
+
+    let new_leader = ctl.leader().await.unwrap();
+    let new_term = ctl.term(new_leader).await;
+    // The old leader should be replaced by the new leader with a higher term
+    assert_ne!(old_leader, new_leader);
+    assert!(new_term > old_term);
+
+    ctl.close_all().await;
+    // Wait for all connections to finish
+    sleep(Duration::from_millis(500)).await;
 }
 
-async fn start(peers: i32) -> Vec<ServiceHandler> {
-    let services: Vec<RaftService> = Config::builder()
-        .peers(peers)
-        .build()
-        .iter()
-        .map(|cfg| RaftService::new(cfg.clone()))
-        .collect();
+#[tokio::test]
+async fn basic_commit() {
+    let peers = 3;
+    let mut ctl = Controller::new(peers, 50006);
+    ctl.serve_all().await;
 
-    let mut handlers = Vec::new();
-    for service in services {
-        let (close_tx, mut close_rx) = mpsc::channel(1);
-        let srv = service.clone();
-        tokio::spawn(async move {
-            srv.serve_with_shutdown(async move {
-                close_rx.recv().await;
-            })
-            .await
-            .unwrap();
-        });
-        handlers.push(ServiceHandler {
-            service,
-            close_ch: close_tx,
-        })
+    // Wait for establishing agreement on one leader
+    sleep(Duration::from_millis(1000)).await;
+    let leader = ctl.leader().await.unwrap();
+
+    let data = b"hello, raft!".to_vec();
+
+    ctl.append_command(leader, data.clone()).await;
+    let recv_data = ctl.read_commit(leader).await.unwrap();
+    assert!(recv_data.as_slice() == data.as_slice());
+
+    // Wait for commit sync to peers
+    sleep(Duration::from_millis(500)).await;
+    for idx in (0..peers).filter(|idx| *idx != (leader as i32)) {
+        let recv_data = ctl.read_commit(idx as usize).await.unwrap();
+        assert!(recv_data.as_slice() == data.as_slice());
     }
-
-    handlers
-}
-
-async fn count_roles(services: &Vec<ServiceHandler>) -> (i32, i32, i32) {
-    let mut leader_cnt = 0;
-    let mut followers = 0;
-    let mut candidates = 0;
-    for service in services {
-        match service.role().await {
-            state::Role::Leader => leader_cnt += 1,
-            state::Role::Follower => followers += 1,
-            state::Role::Candidate => candidates += 1,
-        }
-    }
-    (leader_cnt, followers, candidates)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-#[tokio::test]
-async fn leader_election() {
-    let handlers = start(3).await;
+struct Controller {
+    services: Vec<RaftService>,
+    commit_rxs: Vec<mpsc::Receiver<Arc<Vec<u8>>>>,
+}
 
-    // Wait for establishing agreement on one leader
-    sleep(Duration::from_secs(1)).await;
-
-    let (leader_cnt, followers, candidates) = count_roles(&handlers).await;
-
-    assert_eq!(leader_cnt, 1);
-    assert_eq!(followers, 2);
-    assert_eq!(candidates, 0);
-
-    for handler in handlers {
-        handler.close().await;
+impl Controller {
+    fn new(peers: i32, port_base: u16) -> Self {
+        let mut services = Vec::with_capacity(peers as usize);
+        let mut commit_rxs = Vec::with_capacity(peers as usize);
+        for cfg in Config::builder()
+            .peers(peers)
+            .base_port(port_base)
+            .build()
+            .into_iter()
+        {
+            let (commit_tx, commit_rx) = mpsc::channel(1);
+            services.push(RaftService::new(cfg, commit_tx));
+            commit_rxs.push(commit_rx);
+        }
+        Controller {
+            services,
+            commit_rxs,
+        }
     }
 
-    // Wait for all connections to finish
-    sleep(Duration::from_secs(1)).await;
+    async fn serve(&mut self, idx: usize) {
+        let srv = self.services[idx].clone();
+        tokio::spawn(async move {
+            srv.serve().await.unwrap();
+        });
+    }
+
+    async fn serve_all(&mut self) {
+        for i in 0..self.services.len() {
+            self.serve(i).await;
+        }
+    }
+
+    async fn close(&self, idx: usize) {
+        self.services[idx].close().await;
+    }
+
+    async fn close_all(&self) {
+        for i in 0..self.services.len() {
+            self.close(i).await;
+        }
+    }
+
+    async fn setup_timer(&self, idx: usize) {
+        let srv = self.services[idx].clone();
+        let state = srv.state();
+        let ctx = srv.context();
+        let state = state.lock().await;
+        state.on_timeout(ctx.clone()).await;
+        state.on_tick(ctx.clone()).await;
+    }
+
+    async fn term(&self, idx: usize) -> u64 {
+        self.services[idx].state().lock().await.term()
+    }
+
+    async fn role(&self, idx: usize) -> state::Role {
+        self.services[idx].state().lock().await.role()
+    }
+
+    async fn count_roles(&self) -> (i32, i32, i32) {
+        let mut followers = 0;
+        let mut candidates = 0;
+        let mut leader_cnt = 0;
+        for i in 0..self.services.len() {
+            match self.role(i).await {
+                state::Role::Follower => followers += 1,
+                state::Role::Candidate => candidates += 1,
+                state::Role::Leader => leader_cnt += 1,
+            }
+        }
+        (followers, candidates, leader_cnt)
+    }
+
+    async fn leader(&self) -> Option<usize> {
+        for i in 0..self.services.len() {
+            if self.role(i).await == state::Role::Leader {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    async fn append_command(&self, idx: usize, cmd: Vec<u8>) {
+        self.services[idx].append_command(cmd).await.unwrap();
+    }
+
+    async fn read_commit(&mut self, idx: usize) -> Option<Arc<Vec<u8>>> {
+        self.commit_rxs[idx].recv().await
+    }
 }

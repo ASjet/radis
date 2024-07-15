@@ -5,7 +5,7 @@ use super::{
     RequestVoteArgs, RequestVoteReply,
 };
 use crate::conf::Config;
-use log::{debug, info};
+use log::{debug, error, info};
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use std::fmt::Debug;
@@ -33,11 +33,17 @@ pub trait State: Sync + Send + Debug {
     fn term(&self) -> Term;
     fn role(&self) -> Role;
     fn following(&self) -> Option<PeerID>;
-    async fn setup_timer(&self, ctx: RaftContext);
+    async fn setup(&self, ctx: RaftContext);
     /// Call with holding the lock of state
     async fn on_timeout(&self, ctx: RaftContext) -> Option<Arc<Box<dyn State>>>;
     /// Call without holding the lock of state
     async fn on_tick(&self, ctx: RaftContext) -> Option<Arc<Box<dyn State>>>;
+    /// Append new command
+    async fn on_command(
+        &self,
+        ctx: RaftContext,
+        cmd: Vec<u8>,
+    ) -> anyhow::Result<Option<Arc<Box<dyn State>>>>;
 
     async fn request_vote_logic(
         &self,
@@ -113,12 +119,16 @@ pub trait State: Sync + Send + Debug {
                 reason = "invalid leader term";
                 "reject rpc request"
             );
+            let (last_log_index, last_log_term) = match ctx.read().await.log().latest() {
+                Some(log) => log,
+                None => (0, 0),
+            };
             return (
                 AppendEntriesReply {
                     term: self.term(),
                     success: false,
-                    conflict_index: 0,
-                    conflict_term: 0,
+                    last_log_index,
+                    last_log_term,
                 },
                 None,
             );
@@ -187,10 +197,15 @@ impl Serialize for Box<dyn State> {
     }
 }
 
-pub fn init(cfg: Config) -> (Arc<RwLock<Context>>, Arc<Mutex<Arc<Box<dyn State>>>>) {
+pub fn init(
+    cfg: Config,
+    commit_ch: mpsc::Sender<Arc<Vec<u8>>>,
+) -> (Arc<RwLock<Context>>, Arc<Mutex<Arc<Box<dyn State>>>>) {
     let (timeout_tx, timeout_rx) = mpsc::channel(1);
     let (tick_tx, tick_rx) = mpsc::channel(1);
-    let context = Arc::new(RwLock::new(Context::new(cfg, timeout_tx, tick_tx)));
+    let context = Arc::new(RwLock::new(Context::new(
+        cfg, commit_ch, timeout_tx, tick_tx,
+    )));
 
     let init_state = FollowerState::new(0, None);
     info!(target: "raft::state",
@@ -206,16 +221,43 @@ pub async fn transition<'a>(
     mut state: MutexGuard<'a, Arc<Box<dyn State>>>,
     new_state: Option<Arc<Box<dyn State>>>,
     ctx: Arc<RwLock<Context>>,
-) {
+) -> bool {
     if let Some(new_state) = new_state {
+        if new_state.term() < state.term() {
+            // Forbid lower term state transition
+            error!(target: "raft::state",
+                old_state:serde = (&*state as &Box<dyn State>),
+                new_state:serde = (&new_state as &Box<dyn State>);
+                "invalid state transition"
+            );
+            return false;
+        }
+        match (state.role(), new_state.role()) {
+            (Role::Follower, Role::Candidate) => {}
+            (Role::Candidate, Role::Leader) => {}
+            (Role::Follower, Role::Follower) => {}
+            (Role::Candidate, Role::Follower) => {}
+            (Role::Leader, Role::Follower) => {}
+            _ => {
+                // Forbid invalid state transition
+                error!(target: "raft::state",
+                    old_state:serde = (&*state as &Box<dyn State>),
+                    new_state:serde = (&new_state as &Box<dyn State>);
+                    "invalid state transition"
+                );
+                return false;
+            }
+        }
         info!(target: "raft::state",
             old_state:serde = (&*state as &Box<dyn State>),
             new_state:serde = (&new_state as &Box<dyn State>);
             "state transition occurred"
         );
         *state = new_state;
-        state.setup_timer(ctx).await;
+        state.setup(ctx).await;
+        return true;
     }
+    false
 }
 
 fn handle_timer(
@@ -226,7 +268,7 @@ fn handle_timer(
 ) {
     tokio::spawn(async move {
         ctx.read().await.init_timer().await;
-        state.lock().await.setup_timer(ctx.clone()).await;
+        state.lock().await.setup(ctx.clone()).await;
         loop {
             tokio::select! {
                 _ = timeout_rx.recv() => {
@@ -267,7 +309,8 @@ fn handle_timer(
 
 #[tokio::test]
 async fn reject_lower_term() {
-    let (ctx, _) = init(Config::builder().peers(1).build().pop().unwrap());
+    let (commit_tx, _) = mpsc::channel(1);
+    let (ctx, _) = init(Config::builder().peers(1).build().pop().unwrap(), commit_tx);
     let state = FollowerState::new(2, None);
 
     assert_eq!(2, state.term());
@@ -311,8 +354,8 @@ async fn reject_lower_term() {
         AppendEntriesReply {
             term: 2,
             success: false,
-            conflict_index: 0,
-            conflict_term: 0,
+            last_log_index: 0,
+            last_log_term: 0,
         },
         reply
     );
