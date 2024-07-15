@@ -1,7 +1,9 @@
 use radis::conf::Config;
 use radis::raft::state;
 use radis::raft::RaftService;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio::time::sleep;
 
 #[tokio::test]
@@ -46,10 +48,10 @@ async fn fail_over() {
     sleep(Duration::from_millis(1000)).await;
 
     let (followers, candidates, leader_cnt) = ctl.count_roles().await;
-    // There should be a new candidate that got a vote
+    // There should be a new leader got elected
     assert_eq!(followers, 1);
-    assert_eq!(candidates, 1);
-    assert_eq!(leader_cnt, 1); // Old leader
+    assert_eq!(candidates, 0);
+    assert_eq!(leader_cnt, 2); // New leader plus old leader
 
     // Old leader back online
     ctl.serve(old_leader).await;
@@ -69,22 +71,54 @@ async fn fail_over() {
     sleep(Duration::from_millis(500)).await;
 }
 
+#[tokio::test]
+async fn basic_commit() {
+    let peers = 3;
+    let mut ctl = Controller::new(peers, 50006);
+    ctl.serve_all().await;
+
+    // Wait for establishing agreement on one leader
+    sleep(Duration::from_millis(1000)).await;
+    let leader = ctl.leader().await.unwrap();
+
+    let data = b"hello, raft!".to_vec();
+
+    ctl.append_command(leader, data.clone()).await;
+    let recv_data = ctl.read_commit(leader).await.unwrap();
+    assert!(recv_data.as_slice() == data.as_slice());
+
+    // Wait for commit sync to peers
+    sleep(Duration::from_millis(500)).await;
+    for idx in (0..peers).filter(|idx| *idx != (leader as i32)) {
+        let recv_data = ctl.read_commit(idx as usize).await.unwrap();
+        assert!(recv_data.as_slice() == data.as_slice());
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 struct Controller {
     services: Vec<RaftService>,
+    commit_rxs: Vec<mpsc::Receiver<Arc<Vec<u8>>>>,
 }
 
 impl Controller {
     fn new(peers: i32, port_base: u16) -> Self {
+        let mut services = Vec::with_capacity(peers as usize);
+        let mut commit_rxs = Vec::with_capacity(peers as usize);
+        for cfg in Config::builder()
+            .peers(peers)
+            .base_port(port_base)
+            .build()
+            .into_iter()
+        {
+            let (commit_tx, commit_rx) = mpsc::channel(1);
+            services.push(RaftService::new(cfg, commit_tx));
+            commit_rxs.push(commit_rx);
+        }
         Controller {
-            services: Config::builder()
-                .peers(peers)
-                .base_port(port_base)
-                .build()
-                .iter()
-                .map(|cfg| RaftService::new(cfg.clone()))
-                .collect(),
+            services,
+            commit_rxs,
         }
     }
 
@@ -149,5 +183,13 @@ impl Controller {
             }
         }
         None
+    }
+
+    async fn append_command(&self, idx: usize, cmd: Vec<u8>) {
+        self.services[idx].append_command(cmd).await.unwrap();
+    }
+
+    async fn read_commit(&mut self, idx: usize) -> Option<Arc<Vec<u8>>> {
+        self.commit_rxs[idx].recv().await
     }
 }
