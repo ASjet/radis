@@ -4,7 +4,7 @@ use super::{
     AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply,
     RequestVoteArgs, RequestVoteReply,
 };
-use super::{LogIndex, PeerID, RaftContext, Role, State, Term};
+use super::{PeerID, RaftContext, Role, State, Term};
 use crate::raft::config;
 use futures::future;
 use log::{debug, error, info};
@@ -76,7 +76,7 @@ impl State for CandidateState {
 
     async fn append_entries_logic(
         &self,
-        _ctx: RaftContext,
+        ctx: RaftContext,
         args: AppendEntriesArgs,
     ) -> (AppendEntriesReply, Option<Arc<Box<dyn State>>>) {
         info!(target: "raft::state",
@@ -84,14 +84,10 @@ impl State for CandidateState {
             leader = args.leader_id;
             "other peer won current election, revert to follower"
         );
+        let new_state = FollowerState::new(args.term.clone(), Some(args.leader_id.clone()));
         (
-            AppendEntriesReply {
-                term: self.term,
-                success: true,
-                conflict_term: 0,
-                conflict_index: 0,
-            },
-            Some(FollowerState::new(args.term, Some(args.leader_id))),
+            new_state.handle_append_entries(ctx, args).await.0,
+            Some(new_state),
         )
     }
 
@@ -141,6 +137,7 @@ impl State for CandidateState {
                 let peer_url = peer_cli.lock().await.url();
                 match resp {
                     Ok(resp) => {
+                        // TODO: prefetch peer next index
                         debug!(target: "raft::rpc",
                             term = resp.term,
                             peer = peer_url,

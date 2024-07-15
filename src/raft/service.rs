@@ -1,4 +1,4 @@
-use super::context::{Context, LogIndex};
+use super::context::Context;
 use super::state::{self, State};
 use super::{
     AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply, RaftServer,
@@ -25,11 +25,11 @@ pub struct RaftService {
 }
 
 impl RaftService {
-    pub fn new(cfg: Config) -> Self {
+    pub fn new(cfg: Config, commit_ch: mpsc::Sender<Arc<Vec<u8>>>) -> Self {
         let Config {
             id, listen_addr, ..
         } = cfg.clone();
-        let (context, state) = state::init(cfg);
+        let (context, state) = state::init(cfg, commit_ch);
         RaftService {
             id,
             listen_addr,
@@ -48,6 +48,7 @@ impl RaftService {
     }
 
     pub async fn append_command(&self, cmd: Vec<u8>) -> Result<()> {
+        info!(target: "raft::service", id = self.id; "append command");
         let state = self.state.lock().await;
         let new_state = state.on_command(self.context.clone(), cmd).await?;
         if state::transition(state, new_state, self.context.clone()).await {

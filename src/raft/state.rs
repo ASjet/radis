@@ -5,7 +5,7 @@ use super::{
     RequestVoteArgs, RequestVoteReply,
 };
 use crate::conf::Config;
-use log::{debug, info};
+use log::{debug, error, info};
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use std::fmt::Debug;
@@ -119,12 +119,16 @@ pub trait State: Sync + Send + Debug {
                 reason = "invalid leader term";
                 "reject rpc request"
             );
+            let (last_log_index, last_log_term) = match ctx.read().await.log().latest() {
+                Some(log) => log,
+                None => (0, 0),
+            };
             return (
                 AppendEntriesReply {
                     term: self.term(),
                     success: false,
-                    conflict_index: 0,
-                    conflict_term: 0,
+                    last_log_index,
+                    last_log_term,
                 },
                 None,
             );
@@ -193,10 +197,15 @@ impl Serialize for Box<dyn State> {
     }
 }
 
-pub fn init(cfg: Config) -> (Arc<RwLock<Context>>, Arc<Mutex<Arc<Box<dyn State>>>>) {
+pub fn init(
+    cfg: Config,
+    commit_ch: mpsc::Sender<Arc<Vec<u8>>>,
+) -> (Arc<RwLock<Context>>, Arc<Mutex<Arc<Box<dyn State>>>>) {
     let (timeout_tx, timeout_rx) = mpsc::channel(1);
     let (tick_tx, tick_rx) = mpsc::channel(1);
-    let context = Arc::new(RwLock::new(Context::new(cfg, timeout_tx, tick_tx)));
+    let context = Arc::new(RwLock::new(Context::new(
+        cfg, commit_ch, timeout_tx, tick_tx,
+    )));
 
     let init_state = FollowerState::new(0, None);
     info!(target: "raft::state",
@@ -214,7 +223,7 @@ pub async fn transition<'a>(
     ctx: Arc<RwLock<Context>>,
 ) -> bool {
     if let Some(new_state) = new_state {
-if new_state.term() < state.term() {
+        if new_state.term() < state.term() {
             // Forbid lower term state transition
             error!(target: "raft::state",
                 old_state:serde = (&*state as &Box<dyn State>),
@@ -300,7 +309,8 @@ fn handle_timer(
 
 #[tokio::test]
 async fn reject_lower_term() {
-    let (ctx, _) = init(Config::builder().peers(1).build().pop().unwrap());
+    let (commit_tx, _) = mpsc::channel(1);
+    let (ctx, _) = init(Config::builder().peers(1).build().pop().unwrap(), commit_tx);
     let state = FollowerState::new(2, None);
 
     assert_eq!(2, state.term());
@@ -344,8 +354,8 @@ async fn reject_lower_term() {
         AppendEntriesReply {
             term: 2,
             success: false,
-            conflict_index: 0,
-            conflict_term: 0,
+            last_log_index: 0,
+            last_log_term: 0,
         },
         reply
     );

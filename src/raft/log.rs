@@ -1,3 +1,6 @@
+use log::info;
+use tokio::sync::mpsc;
+
 use super::context::LogIndex;
 use super::state::Term;
 use super::Log;
@@ -32,7 +35,7 @@ impl LogManager {
         Self {
             commit_index: 0,
             snapshot_index: 0,
-            logs: Vec::new(),
+            logs: vec![InnerLog::new(0, vec![])],
             snapshot: None,
         }
     }
@@ -58,19 +61,38 @@ impl LogManager {
     pub fn latest(&self) -> Option<(LogIndex, Term)> {
         self.logs
             .last()
-            .map(|log| (self.snapshot_index + self.logs.len() as u64, log.term))
+            .map(|log| (self.snapshot_index + self.logs.len() as u64 - 1, log.term))
     }
 
     pub fn term(&self, index: LogIndex) -> Option<Term> {
-        let index = index as usize;
-        if index < self.snapshot_index as usize {
+        if index < self.snapshot_index {
             return None;
         }
-        let index = index - self.snapshot_index as usize;
+        let index = (index - self.snapshot_index) as usize;
         if index >= self.logs.len() {
             return None;
         }
         Some(self.logs[index].term)
+    }
+
+    pub fn first_log_at_term(&self, term: Term) -> Option<LogIndex> {
+        self.logs
+            .iter()
+            .position(|log| log.term == term)
+            .map(|index| index as u64 + self.snapshot_index)
+    }
+
+    pub fn delete_since(&mut self, index: LogIndex) -> usize {
+        if index < self.snapshot_index {
+            return 0;
+        }
+        let index = (index - self.snapshot_index) as usize;
+        let deleted = self.logs.drain(index..).count();
+        info!(target: "raft::log",
+            deleted = deleted;
+            "delete logs[{}..]", index
+        );
+        deleted
     }
 
     pub fn commit_index(&self) -> LogIndex {
@@ -79,5 +101,30 @@ impl LogManager {
 
     pub fn snapshot_index(&self) -> LogIndex {
         self.snapshot_index
+    }
+
+    pub async fn commit(&mut self, index: LogIndex, ch: &mpsc::Sender<Arc<Vec<u8>>>) {
+        if index <= self.commit_index {
+            return;
+        }
+
+        info!(target: "raft::log",
+            "commit logs[{}..{}]",
+            self.commit_index, index
+        );
+        // Since commit_index is the index that already committed,
+        // we need to start from commit_index + 1
+        let start = (self.commit_index - self.snapshot_index + 1) as usize;
+        let end = (index - self.snapshot_index + 1) as usize;
+        for log in if end >= self.logs.len() {
+            &self.logs[start..]
+        } else {
+            &self.logs[start..end]
+        }
+        .iter()
+        {
+            ch.send(log.data.clone()).await.unwrap();
+        }
+        self.commit_index = index;
     }
 }

@@ -21,18 +21,100 @@ impl FollowerState {
     }
 
     /// Check if the candidate's log is more up-to-date
-    fn is_request_valid(&self, _ctx: RaftContext, _args: &RequestVoteArgs) -> bool {
-        // TODO: implement this
-        true
+    async fn is_request_valid(&self, ctx: RaftContext, args: &RequestVoteArgs) -> bool {
+        let ctx = ctx.read().await;
+        let log = ctx.log();
+        let (latest_index, latest_term) = match log.latest() {
+            Some(log) => log,
+            None => return true,
+        };
+
+        // From 5.4.1:
+        // If the logs have last entries with different terms, then
+        // the log with the later term is more up-to-date.
+        if args.last_log_term < latest_term {
+            return false;
+        }
+        if args.last_log_term > latest_term {
+            return true;
+        }
+
+        // From 5.4.1:
+        // If the logs end with the same term, then
+        // whichever log is longer is more up-to-date.
+        return args.last_log_index >= latest_index;
     }
 
     /// Handle entries from leader, return if any conflict appears
-    fn handle_entries(
+    async fn handle_entries(
         &self,
-        _ctx: RaftContext,
-        _args: AppendEntriesArgs,
+        ctx: RaftContext,
+        args: AppendEntriesArgs,
     ) -> Option<(Term, LogIndex)> {
-        // TODO: append logs and commit
+        let mut ctx = ctx.write().await;
+        let log = ctx.log_mut();
+        let (latest_index, latest_term) = match log.latest() {
+            Some(log) => log,
+            None => (0, 0),
+        };
+
+        // Reply false if log doesn’t contain an entry at prevLogIndex
+        // whose term matches prevLogTerm (§5.3)
+        if args.prev_log_index > latest_index {
+            info!(target: "raft::log",
+                state:serde = self,
+                prev_index = args.prev_log_index,
+                latest_index = latest_index;
+                "reject append logs: prev index is larger than last log index"
+            );
+            return Some((latest_term, latest_index));
+        }
+
+        let prev_term = match log.term(args.prev_log_index) {
+            Some(term) => term,
+            None => {
+                info!(target: "raft::log",
+                    state:serde = self,
+                    prev_index = args.prev_log_index;
+                    "reject append logs: prev index is already trimmed"
+                );
+                return Some((latest_term, latest_index));
+            }
+        };
+
+        // If an existing entry conflicts with a new one (same index but different terms),
+        // delete the existing entry and all that follow it (§5.3)
+        if prev_term != args.prev_log_term {
+            info!(target: "raft::log",
+                state:serde = self,
+                prev_term = prev_term,
+                prev_index = args.prev_log_index;
+                "reject append logs: prev term is conflict with last log term"
+            );
+            // Fallback the whole term once a time
+            let term_start = log.first_log_at_term(prev_term).unwrap();
+            log.delete_since(term_start);
+            return Some((prev_term, args.prev_log_index));
+        }
+
+        log.delete_since(args.prev_log_index + 1);
+
+        // Append any new entries not already in the log
+        let entries = args.entries.len();
+        if entries > 0 {
+            args.entries.into_iter().for_each(|entry| {
+                log.append(entry.term, entry.command);
+            });
+            info!(target: "raft::log",
+                state:serde = self,
+                prev_index = args.prev_log_index ,
+                prev_term = args.prev_log_term,
+                entries = entries;
+                "append new log [{}..{}]",
+                args.prev_log_index + 1,
+                args.prev_log_index + 1 + entries as u64
+            );
+        }
         None
     }
 }
@@ -88,7 +170,7 @@ impl State for FollowerState {
             }
             None => {
                 // Not voted for any candidate yet
-                if self.is_request_valid(ctx.clone(), &args) {
+                if self.is_request_valid(ctx.clone(), &args).await {
                     // Vote for this candidate
                     (
                         true,
@@ -128,7 +210,6 @@ impl State for FollowerState {
         let (success, new_state) = match &self.follow {
             Some(l) if *l == args.leader_id => {
                 // Following this leader
-                // TODO: append entries to context
                 debug!(target: "raft::rpc",
                     state:serde = self,
                     term = args.term,
@@ -158,28 +239,39 @@ impl State for FollowerState {
                 timeout:serde = timeout;
                 "reset timeout timer"
             );
-            if let Some((conflict_term, conflict_index)) = self.handle_entries(ctx, args) {
+            let commit_index = args.leader_commit;
+            if let Some((conflict_term, conflict_index)) =
+                self.handle_entries(ctx.clone(), args).await
+            {
                 AppendEntriesReply {
                     term: self.term,
                     success: false,
-                    conflict_term,
-                    conflict_index,
+                    last_log_index: conflict_index,
+                    last_log_term: conflict_term,
                 }
             } else {
+                let (last_log_index, last_log_term) = match ctx.read().await.log().latest() {
+                    Some(log) => log,
+                    None => (0, 0),
+                };
+                ctx.write().await.commit_log(commit_index).await;
                 AppendEntriesReply {
                     term: self.term,
                     success: true,
-                    conflict_term: 0,
-                    conflict_index: 0,
+                    last_log_index,
+                    last_log_term,
                 }
             }
         } else {
-            // TODO: set latest log' index and term
+            let (last_log_index, last_log_term) = match ctx.read().await.log().latest() {
+                Some(log) => log,
+                None => (0, 0),
+            };
             AppendEntriesReply {
                 term: self.term,
                 success: false,
-                conflict_term: 0,
-                conflict_index: 0,
+                last_log_index,
+                last_log_term,
             }
         };
         (reply, new_state)
@@ -208,7 +300,11 @@ impl State for FollowerState {
 
 #[tokio::test]
 async fn vote_request() {
-    let (ctx, state) = super::init(super::Config::builder().peers(1).build().pop().unwrap());
+    let (commit_tx, _) = tokio::sync::mpsc::channel(1);
+    let (ctx, state) = super::init(
+        super::Config::builder().peers(1).build().pop().unwrap(),
+        commit_tx,
+    );
     let state = state.lock().await;
 
     assert_eq!(state.term(), 0);
@@ -241,7 +337,11 @@ async fn vote_request() {
 
 #[tokio::test]
 async fn append_entries() {
-    let (ctx, state) = super::init(super::Config::builder().peers(1).build().pop().unwrap());
+    let (commit_tx, _) = tokio::sync::mpsc::channel(1);
+    let (ctx, state) = super::init(
+        super::Config::builder().peers(1).build().pop().unwrap(),
+        commit_tx,
+    );
     let state = state.lock().await;
 
     assert_eq!(state.term(), 0);
@@ -265,8 +365,8 @@ async fn append_entries() {
         AppendEntriesReply {
             term: 2,
             success: true,
-            conflict_index: 0,
-            conflict_term: 0,
+            last_log_index: 0,
+            last_log_term: 0,
         },
         reply
     );

@@ -3,12 +3,11 @@ use super::log::LogManager;
 use super::service::PeerClient;
 use crate::conf::Config;
 use crate::timer::{OneshotTimer, PeriodicTimer};
-use log::debug;
-use std::sync::atomic::AtomicU64;
+use log::{debug, info};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc::Sender;
-use tokio::sync::Mutex;
+use tokio::sync::mpsc::{self, Sender};
+use tokio::sync::{Mutex, RwLock};
 
 pub type PeerID = String;
 pub type Peer = usize;
@@ -19,15 +18,21 @@ pub struct Context {
     peers: Vec<Arc<Mutex<PeerClient>>>,
 
     log: LogManager,
-    peer_next_index: Vec<AtomicU64>,
-    peer_commit_index: Vec<AtomicU64>,
+    peer_next_index: Vec<Arc<Mutex<LogIndex>>>,
+    peer_sync_index: Vec<Arc<RwLock<LogIndex>>>,
+    commit_ch: mpsc::Sender<Arc<Vec<u8>>>,
 
     timeout: Arc<OneshotTimer>,
     tick: Arc<PeriodicTimer>,
 }
 
 impl Context {
-    pub fn new(cfg: Config, timeout_event: Sender<()>, tick_event: Sender<()>) -> Self {
+    pub fn new(
+        cfg: Config,
+        commit_ch: mpsc::Sender<Arc<Vec<u8>>>,
+        timeout_event: Sender<()>,
+        tick_event: Sender<()>,
+    ) -> Self {
         let timeout = Duration::from_millis(REQUEST_TIMEOUT);
         let Config {
             id,
@@ -53,8 +58,9 @@ impl Context {
                 .collect(),
 
             log: LogManager::new(),
-            peer_next_index: (0..peers).map(|_| AtomicU64::new(0)).collect(),
-            peer_commit_index: (0..peers).map(|_| AtomicU64::new(0)).collect(),
+            peer_next_index: (0..peers).map(|_| Arc::new(Mutex::new(0))).collect(),
+            peer_sync_index: (0..peers).map(|_| Arc::new(RwLock::new(0))).collect(),
+            commit_ch,
 
             timeout: Arc::new(OneshotTimer::new(timeout_event)),
             tick: Arc::new(PeriodicTimer::new(tick_event)),
@@ -87,7 +93,7 @@ impl Context {
     }
 
     pub fn majority(&self) -> usize {
-        self.peers.len() / 2 + 1
+        self.peers.len() / 2
     }
 
     pub async fn reset_timeout(&self, timeout: Duration) {
@@ -114,11 +120,28 @@ impl Context {
         &mut self.log
     }
 
-    pub fn peer_next_index(&self, peer: Peer) -> &AtomicU64 {
-        &self.peer_next_index[peer]
+    pub async fn commit_log(&mut self, index: LogIndex) {
+        self.log.commit(index, &self.commit_ch).await;
     }
 
-    pub fn peer_commit_index(&self, peer: Peer) -> &AtomicU64 {
-        &self.peer_commit_index[peer]
+    pub fn peer_next_index(&self, peer: Peer) -> Arc<Mutex<LogIndex>> {
+        self.peer_next_index[peer].clone()
     }
+
+    pub async fn update_peer_index(&mut self, peer: Peer, index: LogIndex) {
+        *self.peer_sync_index[peer].write().await = index;
+
+        let mut sync_indexes = vec![0; self.peers()];
+        for (i, index) in self.peer_sync_index.iter().enumerate() {
+            sync_indexes[i] = *index.read().await;
+        }
+        info!("peer_sync_index: {:?}", sync_indexes);
+        self.commit_log(majority_index(sync_indexes)).await;
+    }
+}
+
+fn majority_index(mut indexes: Vec<LogIndex>) -> LogIndex {
+    indexes.sort_unstable();
+    let majority_index = indexes.len() / 2 - 1;
+    indexes[majority_index]
 }
