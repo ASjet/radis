@@ -20,72 +20,8 @@ impl LeaderState {
     pub fn new(term: Term) -> Arc<Box<dyn State>> {
         Arc::new(Box::new(Self { term }))
     }
-}
 
-#[tonic::async_trait]
-impl State for LeaderState {
-    fn term(&self) -> Term {
-        self.term
-    }
-
-    fn role(&self) -> Role {
-        Role::Leader
-    }
-
-    fn following(&self) -> Option<PeerID> {
-        None
-    }
-
-    async fn setup(&self, ctx: RaftContext) {
-        let tick = Duration::from_millis(config::HEARTBEAT_INTERVAL as u64);
-        let ctx = ctx.read().await;
-        ctx.cancel_timeout().await;
-        ctx.reset_tick(tick).await;
-        debug!(target: "raft::state",
-            state:serde = self,
-            timeout = "stop",
-            tick:serde = tick;
-            "setup timer"
-        );
-    }
-
-    async fn on_command(
-        &self,
-        ctx: RaftContext,
-        cmd: Vec<u8>,
-    ) -> anyhow::Result<Option<Arc<Box<dyn State>>>> {
-        Ok(None)
-    }
-
-    async fn request_vote_logic(
-        &self,
-        _ctx: RaftContext,
-        _args: RequestVoteArgs,
-    ) -> (RequestVoteReply, Option<Arc<Box<dyn State>>>) {
-        (RequestVoteReply::default(), None)
-    }
-
-    async fn append_entries_logic(
-        &self,
-        _ctx: RaftContext,
-        _args: AppendEntriesArgs,
-    ) -> (AppendEntriesReply, Option<Arc<Box<dyn State>>>) {
-        (AppendEntriesReply::default(), None)
-    }
-
-    async fn install_snapshot_logic(
-        &self,
-        _ctx: RaftContext,
-        _args: InstallSnapshotArgs,
-    ) -> (InstallSnapshotReply, Option<Arc<Box<dyn State>>>) {
-        (InstallSnapshotReply::default(), None)
-    }
-
-    async fn on_timeout(&self, _ctx: RaftContext) -> Option<Arc<Box<dyn State>>> {
-        None
-    }
-
-    async fn on_tick(&self, ctx: RaftContext) -> Option<Arc<Box<dyn State>>> {
+    async fn sync_peers(&self, ctx: RaftContext) -> Option<Arc<Box<dyn State>>> {
         let (peers, me) = {
             let ctx = ctx.read().await;
             (ctx.peers(), ctx.me().clone())
@@ -159,5 +95,73 @@ impl State for LeaderState {
         } else {
             None
         }
+    }
+}
+
+#[tonic::async_trait]
+impl State for LeaderState {
+    fn term(&self) -> Term {
+        self.term
+    }
+
+    fn role(&self) -> Role {
+        Role::Leader
+    }
+
+    fn following(&self) -> Option<PeerID> {
+        None
+    }
+
+    async fn setup(&self, ctx: RaftContext) {
+        let tick = Duration::from_millis(config::HEARTBEAT_INTERVAL as u64);
+        let ctx = ctx.read().await;
+        ctx.cancel_timeout().await;
+        ctx.reset_tick(tick).await;
+        debug!(target: "raft::state",
+            state:serde = self,
+            timeout = "stop",
+            tick:serde = tick;
+            "setup timer"
+        );
+    }
+
+    async fn on_command(
+        &self,
+        ctx: RaftContext,
+        cmd: Vec<u8>,
+    ) -> anyhow::Result<Option<Arc<Box<dyn State>>>> {
+        Ok(None)
+    }
+
+    async fn request_vote_logic(
+        &self,
+        _ctx: RaftContext,
+        _args: RequestVoteArgs,
+    ) -> (RequestVoteReply, Option<Arc<Box<dyn State>>>) {
+        (RequestVoteReply::default(), None)
+    }
+
+    async fn append_entries_logic(
+        &self,
+        _ctx: RaftContext,
+        _args: AppendEntriesArgs,
+    ) -> (AppendEntriesReply, Option<Arc<Box<dyn State>>>) {
+        (AppendEntriesReply::default(), None)
+    }
+
+    async fn install_snapshot_logic(
+        &self,
+        _ctx: RaftContext,
+        _args: InstallSnapshotArgs,
+    ) -> (InstallSnapshotReply, Option<Arc<Box<dyn State>>>) {
+        (InstallSnapshotReply::default(), None)
+    }
+
+    async fn on_timeout(&self, _ctx: RaftContext) -> Option<Arc<Box<dyn State>>> {
+        None
+    }
+
+    async fn on_tick(&self, ctx: RaftContext) -> Option<Arc<Box<dyn State>>> {
+        self.sync_peers(ctx).await
     }
 }
