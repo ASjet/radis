@@ -214,6 +214,31 @@ pub async fn transition<'a>(
     ctx: Arc<RwLock<Context>>,
 ) -> bool {
     if let Some(new_state) = new_state {
+if new_state.term() < state.term() {
+            // Forbid lower term state transition
+            error!(target: "raft::state",
+                old_state:serde = (&*state as &Box<dyn State>),
+                new_state:serde = (&new_state as &Box<dyn State>);
+                "invalid state transition"
+            );
+            return false;
+        }
+        match (state.role(), new_state.role()) {
+            (Role::Follower, Role::Candidate) => {}
+            (Role::Candidate, Role::Leader) => {}
+            (Role::Follower, Role::Follower) => {}
+            (Role::Candidate, Role::Follower) => {}
+            (Role::Leader, Role::Follower) => {}
+            _ => {
+                // Forbid invalid state transition
+                error!(target: "raft::state",
+                    old_state:serde = (&*state as &Box<dyn State>),
+                    new_state:serde = (&new_state as &Box<dyn State>);
+                    "invalid state transition"
+                );
+                return false;
+            }
+        }
         info!(target: "raft::state",
             old_state:serde = (&*state as &Box<dyn State>),
             new_state:serde = (&new_state as &Box<dyn State>);
