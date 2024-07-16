@@ -27,7 +27,9 @@ pub struct RaftService {
 impl RaftService {
     pub fn new(cfg: Config, commit_ch: mpsc::Sender<Arc<Vec<u8>>>) -> Self {
         let Config {
-            id, listen_addr, ..
+            id,
+            raft_rpc_addr: listen_addr,
+            ..
         } = cfg.clone();
         let (context, state) = state::init(cfg, commit_ch);
         RaftService {

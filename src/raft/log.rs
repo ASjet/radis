@@ -1,11 +1,10 @@
-use log::info;
-use tokio::sync::mpsc;
-
 use super::context::LogIndex;
 use super::state::Term;
 use super::Log;
+use log::{debug, info};
 use std::ops::Deref;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 #[derive(Debug)]
 pub struct InnerLog {
@@ -88,7 +87,7 @@ impl LogManager {
         }
         let index = (index - self.snapshot_index) as usize;
         let deleted = self.logs.drain(index..).count();
-        info!(target: "raft::log",
+        debug!(target: "raft::log",
             deleted = deleted;
             "delete logs[{}..]", index
         );

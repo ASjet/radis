@@ -36,8 +36,9 @@ impl Context {
         let timeout = Duration::from_millis(REQUEST_TIMEOUT);
         let Config {
             id,
-            listen_addr: _,
-            peer_addrs,
+            redis_addr: _,
+            raft_rpc_addr: _,
+            raft_peers: peer_addrs,
         } = cfg;
         let peers = peer_addrs.len();
 
@@ -135,7 +136,7 @@ impl Context {
         for (i, index) in self.peer_sync_index.iter().enumerate() {
             sync_indexes[i] = *index.read().await;
         }
-        info!("peer_sync_index: {:?}", sync_indexes);
+        debug!("peer_sync_index: {:?}", sync_indexes);
         self.commit_log(majority_index(sync_indexes)).await;
     }
 }

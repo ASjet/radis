@@ -1,8 +1,7 @@
 use clap::Parser;
 use radis::conf::Config;
-use radis::raft::RaftService;
+use radis::db::RedisServer;
 use tokio;
-use tokio::sync::mpsc;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -19,8 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let cfg = Config::from_path(&args.conf)?;
 
-    let (commit_tx, _) = mpsc::channel(1);
-    RaftService::new(cfg, commit_tx).serve().await?;
+    RedisServer::new(cfg).serve().await?;
 
     Ok(())
 }
