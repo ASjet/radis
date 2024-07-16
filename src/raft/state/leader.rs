@@ -92,7 +92,7 @@ impl LeaderState {
                             }
                         } else {
                             // Update next index
-                            info!(target: "raft::rpc",
+                            debug!(target: "raft::rpc",
                                 term = resp.term,
                                 peer = peer_url,
                                 last_log_index = resp.last_log_index,

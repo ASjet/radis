@@ -136,7 +136,7 @@ impl Context {
         for (i, index) in self.peer_sync_index.iter().enumerate() {
             sync_indexes[i] = *index.read().await;
         }
-        info!("peer_sync_index: {:?}", sync_indexes);
+        debug!("peer_sync_index: {:?}", sync_indexes);
         self.commit_log(majority_index(sync_indexes)).await;
     }
 }
