@@ -36,8 +36,9 @@ impl Context {
         let timeout = Duration::from_millis(REQUEST_TIMEOUT);
         let Config {
             id,
-            listen_addr: _,
-            peer_addrs,
+            redis_addr: _,
+            raft_rpc_addr: _,
+            raft_peers: peer_addrs,
         } = cfg;
         let peers = peer_addrs.len();
 
