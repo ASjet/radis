@@ -36,6 +36,14 @@ Then this update will be visible to all nodes:
 "123"
 ```
 
+## Features
+
+- [x] Automatic failover
+- [x] Read/Write splitting
+- [x] Write forwarding
+- [ ] Log compaction(snapshot)
+- [ ] Dynamic membership
+
 ## License
 
 Radis is licensed under the [MIT license](LICENSE).
