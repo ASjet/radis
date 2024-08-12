@@ -1,8 +1,8 @@
 use super::context::Context;
 use super::state::{self, State};
 use super::{
-    AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply, RaftServer,
-    RequestVoteArgs, RequestVoteReply,
+    AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply, NodeInfoArgs,
+    NodeInfoReply, RaftServer, RequestVoteArgs, RequestVoteReply,
 };
 use super::{Raft, RaftClient};
 use crate::conf::Config;
@@ -150,6 +150,15 @@ impl Raft for RaftService {
         state::transition(state, new_state, self.context.clone()).await;
         Ok(Response::new(resp))
     }
+
+    async fn node_info(&self, _: Request<NodeInfoArgs>) -> Result<Response<NodeInfoReply>, Status> {
+        let state = self.state.lock().await;
+        Ok(Response::new(NodeInfoReply {
+            id: self.id.clone(),
+            term: state.term(),
+            role: state.role().to_string(),
+        }))
+    }
 }
 
 pub struct PeerClient {
@@ -221,6 +230,11 @@ impl PeerClient {
             .await?
             .install_snapshot(Request::new(args))
             .await?;
+        Ok(resp.into_inner())
+    }
+
+    pub async fn node_info(&mut self, args: NodeInfoArgs) -> Result<NodeInfoReply, Status> {
+        let resp = self.connect().await?.node_info(Request::new(args)).await?;
         Ok(resp.into_inner())
     }
 }

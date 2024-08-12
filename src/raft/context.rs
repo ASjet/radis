@@ -3,7 +3,7 @@ use super::log::LogManager;
 use super::service::PeerClient;
 use crate::conf::Config;
 use crate::timer::{OneshotTimer, PeriodicTimer};
-use log::{debug, info};
+use log::debug;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, Sender};

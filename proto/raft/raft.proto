@@ -6,6 +6,8 @@ service Raft {
   rpc RequestVote(RequestVoteArgs) returns (RequestVoteReply) {}
   rpc AppendEntries(AppendEntriesArgs) returns (AppendEntriesReply) {}
   rpc InstallSnapshot(InstallSnapshotArgs) returns (InstallSnapshotReply) {}
+  rpc NodeInfo(NodeInfoArgs) returns (NodeInfoReply) {}
+  rpc AppendCommand(AppendCommandArgs) returns (AppendCommandReply) {}
 }
 
 message Log {
@@ -51,3 +53,11 @@ message InstallSnapshotArgs {
 }
 
 message InstallSnapshotReply { uint64 term = 1; }
+
+message NodeInfoArgs {}
+
+message NodeInfoReply {
+  string id = 1;
+  uint64 term = 2;
+  string role = 3;
+}
