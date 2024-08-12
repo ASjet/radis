@@ -7,7 +7,8 @@ service Raft {
   rpc AppendEntries(AppendEntriesArgs) returns (AppendEntriesReply) {}
   rpc InstallSnapshot(InstallSnapshotArgs) returns (InstallSnapshotReply) {}
   rpc NodeInfo(NodeInfoArgs) returns (NodeInfoReply) {}
-  }
+  rpc AppendCommand(AppendCommandArgs) returns (AppendCommandReply) {}
+}
 
 message Log {
   uint64 term = 1;
@@ -59,4 +60,11 @@ message NodeInfoReply {
   string id = 1;
   uint64 term = 2;
   string role = 3;
+}
+
+message AppendCommandArgs { bytes command = 1; }
+
+message AppendCommandReply {
+  bool success = 1;
+  string error = 2;
 }

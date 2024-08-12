@@ -151,7 +151,7 @@ impl State for FollowerState {
         _ctx: RaftContext,
         _cmd: Vec<u8>,
     ) -> anyhow::Result<Option<Arc<Box<dyn State>>>> {
-        Err(anyhow::anyhow!("not leader"))
+        unimplemented!();
     }
 
     async fn request_vote_logic(
