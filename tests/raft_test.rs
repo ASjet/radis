@@ -95,6 +95,34 @@ async fn basic_commit() {
     }
 }
 
+#[tokio::test]
+async fn command_forward() {
+    let peers = 3;
+    let mut ctl = Controller::new(peers, 50009);
+    ctl.serve_all().await;
+
+    // Wait for establishing agreement on one leader
+    sleep(Duration::from_millis(1000)).await;
+    let leader = ctl.leader().await.unwrap();
+    let follower = ctl.follower().await.unwrap();
+
+    let data = b"hello, raft!".to_vec();
+
+    // Append command to follower
+    ctl.append_command(follower, data.clone()).await;
+
+    // Expect the command to be forwarded to the leader
+    let recv_data = ctl.read_commit(leader).await.unwrap();
+    assert!(recv_data.as_slice() == data.as_slice());
+
+    // Wait for commit sync to peers
+    sleep(Duration::from_millis(500)).await;
+    for idx in (0..peers).filter(|idx| *idx != (leader as i32)) {
+        let recv_data = ctl.read_commit(idx as usize).await.unwrap();
+        assert!(recv_data.as_slice() == data.as_slice());
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 struct Controller {
@@ -179,6 +207,15 @@ impl Controller {
     async fn leader(&self) -> Option<usize> {
         for i in 0..self.services.len() {
             if self.role(i).await == state::Role::Leader {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    async fn follower(&self) -> Option<usize> {
+        for i in 0..self.services.len() {
+            if self.role(i).await == state::Role::Follower {
                 return Some(i);
             }
         }
