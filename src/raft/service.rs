@@ -1,7 +1,8 @@
 use super::context::Context;
 use super::state::{self, State};
 use super::{
-    AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply, RaftServer,
+    AppendCommandArgs, AppendCommandReply, AppendEntriesArgs, AppendEntriesReply,
+    InstallSnapshotArgs, InstallSnapshotReply, NodeInfoArgs, NodeInfoReply, RaftServer,
     RequestVoteArgs, RequestVoteReply,
 };
 use super::{Raft, RaftClient};
@@ -52,12 +53,39 @@ impl RaftService {
     pub async fn append_command(&self, cmd: Vec<u8>) -> Result<()> {
         info!(target: "raft::service", id = self.id; "append command");
         let state = self.state.lock().await;
-        let new_state = state.on_command(self.context.clone(), cmd).await?;
-        if state::transition(state, new_state, self.context.clone()).await {
-            Err(anyhow::anyhow!("not leader"))
-        } else {
-            Ok(())
+        match state.role() {
+            state::Role::Follower => {
+                if let Some(leader_id) = state.following() {
+                    let leader = self
+                        .context
+                        .read()
+                        .await
+                        .get_peer_by_id(&leader_id)
+                        .ok_or(anyhow::anyhow!("unknown leader id"))?;
+                    drop(state);
+                    let resp = leader
+                        .lock()
+                        .await
+                        .append_command(AppendCommandArgs { command: cmd })
+                        .await?;
+                    if resp.success {
+                        return Ok(());
+                    } else {
+                        return Err(anyhow::anyhow!(resp.error));
+                    }
+                }
+            }
+            state::Role::Candidate => {}
+            state::Role::Leader => {
+                let new_state = state.on_command(self.context.clone(), cmd).await?;
+                if state::transition(state, new_state, self.context.clone()).await {
+                    return Err(anyhow::anyhow!("not leader"));
+                } else {
+                    return Ok(());
+                }
+            }
         }
+        return Err(anyhow::anyhow!("still in election"));
     }
 
     pub async fn serve(&self) -> Result<()> {
@@ -150,6 +178,35 @@ impl Raft for RaftService {
         state::transition(state, new_state, self.context.clone()).await;
         Ok(Response::new(resp))
     }
+
+    async fn node_info(&self, _: Request<NodeInfoArgs>) -> Result<Response<NodeInfoReply>, Status> {
+        let state = self.state.lock().await;
+        Ok(Response::new(NodeInfoReply {
+            id: self.id.clone(),
+            term: state.term(),
+            role: state.role().to_string(),
+        }))
+    }
+
+    async fn append_command(
+        &self,
+        request: Request<AppendCommandArgs>,
+    ) -> Result<Response<AppendCommandReply>, Status> {
+        let request = request.into_inner();
+        trace!(
+            target: "raft::rpc",
+            "received AppendCommand request",
+        );
+        self.append_command(request.command)
+            .await
+            .map(|_| {
+                Ok(Response::new(AppendCommandReply {
+                    success: true,
+                    error: "".to_string(),
+                }))
+            })
+            .map_err(|e| Status::aborted(e.to_string()))?
+    }
 }
 
 pub struct PeerClient {
@@ -222,5 +279,27 @@ impl PeerClient {
             .install_snapshot(Request::new(args))
             .await?;
         Ok(resp.into_inner())
+    }
+
+    pub async fn node_info(&mut self, args: NodeInfoArgs) -> Result<NodeInfoReply, Status> {
+        let resp = self.connect().await?.node_info(Request::new(args)).await?;
+        Ok(resp.into_inner())
+    }
+
+    pub async fn append_command(
+        &mut self,
+        args: AppendCommandArgs,
+    ) -> Result<AppendCommandReply, Status> {
+        let resp = self
+            .connect()
+            .await?
+            .append_command(Request::new(args))
+            .await?
+            .into_inner();
+        if resp.success {
+            Ok(resp)
+        } else {
+            Err(Status::failed_precondition(resp.error))
+        }
     }
 }

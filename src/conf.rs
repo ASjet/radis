@@ -1,12 +1,13 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Config {
     pub id: String,
     pub redis_addr: String,
     pub raft_rpc_addr: String,
-    pub raft_peers: Vec<String>,
+    pub raft_peers: HashMap<String, String>,
 }
 
 impl Config {
@@ -66,32 +67,43 @@ impl Builder {
     }
 
     pub fn build(self) -> Vec<Config> {
-        let mut cfgs = Vec::new();
-        for id in 0..self.peers {
-            let cfg = Config {
+        struct Node {
+            id: String,
+            redis_addr: String,
+            rpc_listen_host: String,
+            rpc_peer_host: String,
+        }
+        let nodes: Vec<Node> = (0..self.peers)
+            .map(|id| Node {
                 id: format!("{}{}", self.name_prefix, id),
                 redis_addr: join_host_port(&self.raft_rpc_host, 63790 + id as u16),
-                raft_rpc_addr: join_host_port(&self.raft_rpc_host, self.raft_base_port + id as u16),
-                raft_peers: make_peer_addrs(
-                    &self.raft_peer_host,
-                    self.raft_base_port,
-                    self.peers,
-                    id,
+                rpc_listen_host: join_host_port(
+                    &self.raft_rpc_host,
+                    self.raft_base_port + id as u16,
                 ),
-            };
-            cfgs.push(cfg);
-        }
-        cfgs
+                rpc_peer_host: join_host_port(
+                    &self.raft_peer_host,
+                    self.raft_base_port + id as u16,
+                ),
+            })
+            .collect();
+
+        Vec::from_iter(nodes.iter().map(|node| {
+            Config {
+                id: node.id.clone(),
+                redis_addr: node.redis_addr.clone(),
+                raft_rpc_addr: node.rpc_listen_host.clone(),
+                raft_peers: HashMap::from_iter(
+                    nodes
+                        .iter()
+                        .filter(|peer| peer.id != node.id)
+                        .map(|peer| (peer.id.clone(), peer.rpc_peer_host.clone())),
+                ),
+            }
+        }))
     }
 }
 
 fn join_host_port(host: &str, port: u16) -> String {
     format!("{}:{}", host, port)
-}
-
-fn make_peer_addrs(host: &str, base_port: u16, n_peer: i32, id: i32) -> Vec<String> {
-    (0..n_peer)
-        .filter(|peer| *peer != id)
-        .map(|peer| join_host_port(host, base_port + peer as u16))
-        .collect()
 }

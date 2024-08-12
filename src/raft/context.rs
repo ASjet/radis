@@ -3,7 +3,8 @@ use super::log::LogManager;
 use super::service::PeerClient;
 use crate::conf::Config;
 use crate::timer::{OneshotTimer, PeriodicTimer};
-use log::{debug, info};
+use log::debug;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, Sender};
@@ -16,6 +17,7 @@ pub type LogIndex = u64;
 pub struct Context {
     id: String,
     peers: Vec<Arc<Mutex<PeerClient>>>,
+    id_map: Arc<HashMap<String, Peer>>,
 
     log: LogManager,
     peer_next_index: Vec<Arc<Mutex<LogIndex>>>,
@@ -40,27 +42,29 @@ impl Context {
             raft_rpc_addr: _,
             raft_peers: peer_addrs,
         } = cfg;
-        let peers = peer_addrs.len();
+        let n_peer = peer_addrs.len();
+
+        let mut id_map = HashMap::with_capacity(n_peer);
+        let mut peers = Vec::with_capacity(n_peer);
+        for (i, (id, addr)) in peer_addrs.into_iter().enumerate() {
+            debug!(target: "raft::context",
+                peer_index = i,
+                peer_id = id,
+                peer_addr = addr,
+                timeout:serde = timeout;
+                "init peer client"
+            );
+            id_map.insert(id, i);
+            peers.push(Arc::new(Mutex::new(PeerClient::new(&addr, timeout))));
+        }
 
         Self {
             id,
-            peers: peer_addrs
-                .iter()
-                .enumerate()
-                .map(|(i, addr)| {
-                    debug!(target: "raft::context",
-                        peer_index = i,
-                        peer_addr = addr,
-                        timeout:serde = timeout;
-                        "init peer client"
-                    );
-                    Arc::new(Mutex::new(PeerClient::new(addr, timeout)))
-                })
-                .collect(),
-
+            peers,
+            id_map: Arc::new(id_map),
             log: LogManager::new(),
-            peer_next_index: (0..peers).map(|_| Arc::new(Mutex::new(0))).collect(),
-            peer_sync_index: (0..peers).map(|_| Arc::new(RwLock::new(0))).collect(),
+            peer_next_index: (0..n_peer).map(|_| Arc::new(Mutex::new(0))).collect(),
+            peer_sync_index: (0..n_peer).map(|_| Arc::new(RwLock::new(0))).collect(),
             commit_ch,
 
             timeout: Arc::new(OneshotTimer::new(timeout_event)),
@@ -87,6 +91,10 @@ impl Context {
 
     pub fn get_peer(&self, peer: Peer) -> Arc<Mutex<PeerClient>> {
         self.peers[peer].clone()
+    }
+
+    pub fn get_peer_by_id(&self, id: &str) -> Option<Arc<Mutex<PeerClient>>> {
+        self.id_map.get(id).map(|&peer| self.peers[peer].clone())
     }
 
     pub fn peers(&self) -> usize {

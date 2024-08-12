@@ -28,6 +28,16 @@ pub enum Role {
     Leader,
 }
 
+impl Role {
+    pub fn to_string(&self) -> String {
+        match self {
+            Role::Follower => "Follower".to_string(),
+            Role::Candidate => "Candidate".to_string(),
+            Role::Leader => "Leader".to_string(),
+        }
+    }
+}
+
 #[tonic::async_trait]
 pub trait State: Sync + Send + Debug {
     fn term(&self) -> Term;
