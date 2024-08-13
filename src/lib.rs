@@ -1,6 +1,5 @@
 pub mod conf;
 pub mod db;
-pub mod timer;
 
 pub mod raft {
     tonic::include_proto!("raft");

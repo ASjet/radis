@@ -12,8 +12,15 @@
     name = "mkconf"
     path = "src/bin/mkconf/main.rs"
 
+[workspace]
+    members = [
+        "crates/timer",
+    ]
+    [workspace.dependencies]
+        timer = {path = "crates/timer"}
 
 [dependencies]
+    timer.workspace = true
     anyhow = "1.0.86"
     async-timers = "0.1.4"
     bytes = {version = "1.6.1", features = [
