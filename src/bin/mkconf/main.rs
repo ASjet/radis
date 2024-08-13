@@ -1,6 +1,6 @@
 use clap::Parser;
 use radis::conf::Config;
-use radis::raft::config::Config as RaftConfig;
+use raft::config::Config as RaftConfig;
 use std::fs;
 
 #[derive(Parser, Debug)]

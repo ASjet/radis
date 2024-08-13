@@ -4,7 +4,7 @@ use super::{
     RequestVoteArgs, RequestVoteReply,
 };
 use super::{LogIndex, PeerID, RaftContext, Role, State, Term};
-use crate::raft::config;
+use crate::config;
 use log::{debug, info};
 use serde::Serialize;
 use std::sync::Arc;

@@ -14,28 +14,27 @@
 
 [workspace]
     members = [
+        "crates/raft",
         "crates/timer",
     ]
     [workspace.dependencies]
         timer = {path = "crates/timer"}
+        raft = {path = "crates/raft"}
 
 [dependencies]
     timer.workspace = true
+    raft.workspace = true
     anyhow = "1.0.86"
-    async-timers = "0.1.4"
     bytes = {version = "1.6.1", features = [
         "serde",
     ]}
     clap = {version = "4.5.8", features = [
         "derive",
     ]}
-    futures = "0.3.30"
     log = {version = "0.4.22", features = [
         "kv",
     ]}
     mini-redis = "0.4.1"
-    prost = "0.12.6"
-    rand = "0.8.5"
     serde = {version = "1.0.203", features = [
         "derive",
     ]}
@@ -46,7 +45,3 @@
         "macros",
     ]}
     toml = "0.8.14"
-    tonic = "0.11.0"
-
-[build-dependencies]
-    tonic-build = "0.11.0"

@@ -1,7 +1,6 @@
 use anyhow::Result;
+use raft::config::Config as RaftConfig;
 use serde::{Deserialize, Serialize};
-
-use crate::raft::config::Config as RaftConfig;
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Config {

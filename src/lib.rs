@@ -1,20 +1,6 @@
 pub mod conf;
 pub mod db;
 
-pub mod raft {
-    tonic::include_proto!("raft");
-    pub use raft_client::RaftClient;
-    pub use raft_server::{Raft, RaftServer};
-
-    pub mod config;
-    mod context;
-    mod log;
-    mod service;
-    pub mod state;
-
-    pub use service::RaftService;
-}
-
 #[cfg(feature = "async_log")]
 pub fn init_logger(level: &str) {
     use structured_logger::{async_json::new_writer, Builder};

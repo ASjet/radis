@@ -1,9 +1,9 @@
 use crate::conf::Config;
-use crate::raft::RaftService;
 use anyhow::Result;
 use bytes::Bytes;
 use log::{debug, info};
 use mini_redis::{Command, Connection, Frame};
+use raft::RaftService;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tokio::net::{TcpListener, TcpStream};
