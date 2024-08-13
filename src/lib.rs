@@ -6,7 +6,7 @@ pub mod raft {
     pub use raft_client::RaftClient;
     pub use raft_server::{Raft, RaftServer};
 
-    mod config;
+    pub mod config;
     mod context;
     mod log;
     mod service;

@@ -1,4 +1,4 @@
-use radis::conf::Config;
+use radis::raft::config::Config;
 use radis::raft::state;
 use radis::raft::RaftService;
 use std::sync::Arc;

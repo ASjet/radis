@@ -1,7 +1,7 @@
+use super::config::Config;
 use super::config::REQUEST_TIMEOUT;
 use super::log::LogManager;
 use super::service::PeerClient;
-use crate::conf::Config;
 use log::debug;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -38,9 +38,8 @@ impl Context {
         let timeout = Duration::from_millis(REQUEST_TIMEOUT);
         let Config {
             id,
-            redis_addr: _,
-            raft_rpc_addr: _,
-            raft_peers: peer_addrs,
+            rpc_host: _,
+            peers: peer_addrs,
         } = cfg;
         let n_peer = peer_addrs.len();
 
