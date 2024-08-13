@@ -3,7 +3,7 @@ use super::{
     InstallSnapshotReply, RequestVoteArgs, RequestVoteReply,
 };
 use super::{PeerID, RaftContext, Role, State, Term};
-use crate::raft::config;
+use crate::config;
 use futures::future;
 use log::{debug, error, info};
 use serde::Serialize;

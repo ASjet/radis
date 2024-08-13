@@ -1,12 +1,12 @@
+use super::config::Config;
 use super::config::REQUEST_TIMEOUT;
 use super::log::LogManager;
 use super::service::PeerClient;
-use crate::conf::Config;
-use crate::timer::{OneshotTimer, PeriodicTimer};
 use log::debug;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use timer::{OneshotTimer, PeriodicTimer};
 use tokio::sync::mpsc::{self, Sender};
 use tokio::sync::{Mutex, RwLock};
 
@@ -38,9 +38,8 @@ impl Context {
         let timeout = Duration::from_millis(REQUEST_TIMEOUT);
         let Config {
             id,
-            redis_addr: _,
-            raft_rpc_addr: _,
-            raft_peers: peer_addrs,
+            rpc_host: _,
+            peers: peer_addrs,
         } = cfg;
         let n_peer = peer_addrs.len();
 

@@ -1,10 +1,10 @@
+use super::config::Config;
 use super::context::Context;
 use super::context::{LogIndex, PeerID};
 use super::{
     AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply,
     RequestVoteArgs, RequestVoteReply,
 };
-use crate::conf::Config;
 use log::{debug, error, info};
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};

@@ -1,6 +1,6 @@
-use radis::timer::{OneshotTimer, PeriodicTimer};
 use std::sync::Arc;
 use std::time::Duration;
+use timer::{OneshotTimer, PeriodicTimer};
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 

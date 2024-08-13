@@ -1,6 +1,6 @@
-use radis::conf::Config;
-use radis::raft::state;
-use radis::raft::RaftService;
+use raft::config::Config;
+use raft::state;
+use raft::RaftService;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;

@@ -1,9 +1,9 @@
 use crate::conf::Config;
-use crate::raft::RaftService;
 use anyhow::Result;
 use bytes::Bytes;
 use log::{debug, info};
 use mini_redis::{Command, Connection, Frame};
+use raft::RaftService;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tokio::net::{TcpListener, TcpStream};
@@ -28,8 +28,8 @@ pub struct RedisServer {
 impl RedisServer {
     pub fn new(cfg: Config) -> Self {
         let (commit_tx, commit_rx) = mpsc::channel(1);
-        let listen_addr = cfg.redis_addr.clone();
-        let raft_server = RaftService::new(cfg, commit_tx);
+        let listen_addr = cfg.listen_addr.clone();
+        let raft_server = RaftService::new(cfg.raft, commit_tx);
         Self {
             listen_addr,
             raft_server,

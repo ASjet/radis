@@ -1,5 +1,6 @@
 use clap::Parser;
 use radis::conf::Config;
+use raft::config::Config as RaftConfig;
 use std::fs;
 
 #[derive(Parser, Debug)]
@@ -29,27 +30,39 @@ struct Args {
     #[arg(long, default_value_t = String::from("http://localhost"))]
     peer_host: String,
 
-    /// Listen port start
+    /// Raft rpc listening start port
     #[arg(long, default_value_t = 50000)]
-    port: u16,
+    raft_port: u16,
+
+    /// Redis API listening start port
+    #[arg(long, default_value_t = 63790)]
+    redis_port: u16,
 }
 
 fn main() {
     let args = Args::parse();
 
-    Config::builder()
+    RaftConfig::builder()
         .listen_host(&args.host)
         .peer_host(&args.peer_host)
-        .base_port(args.port)
+        .base_port(args.raft_port)
         .name_prefix(&args.prefix)
         .peers(args.peers)
         .build()
-        .iter()
+        .into_iter()
+        .enumerate()
+        .map(|(i, rc)| Config {
+            listen_addr: format!("{}:{}", &args.host, args.redis_port + i as u16),
+            raft: rc,
+        })
         .for_each(|cfg| {
             let (path, filename) = if args.sub_dir {
-                (format!("{}/{}", &args.dir, &cfg.id), "conf.toml".into())
+                (
+                    format!("{}/{}", &args.dir, &cfg.raft.id),
+                    "conf.toml".into(),
+                )
             } else {
-                (args.dir.clone(), format!("{}.toml", &cfg.id))
+                (args.dir.clone(), format!("{}.toml", &cfg.raft.id))
             };
             let cfg = toml::to_string_pretty(&cfg).unwrap();
             fs::create_dir_all(&path).unwrap();

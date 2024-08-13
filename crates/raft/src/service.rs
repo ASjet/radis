@@ -1,3 +1,4 @@
+use super::config::Config;
 use super::context::Context;
 use super::state::{self, State};
 use super::{
@@ -6,7 +7,6 @@ use super::{
     RequestVoteArgs, RequestVoteReply,
 };
 use super::{Raft, RaftClient};
-use crate::conf::Config;
 use anyhow::Result;
 use log::{info, trace};
 use std::sync::Arc;
@@ -29,7 +29,7 @@ impl RaftService {
     pub fn new(cfg: Config, commit_ch: mpsc::Sender<Arc<Vec<u8>>>) -> Self {
         let Config {
             id,
-            raft_rpc_addr: listen_addr,
+            rpc_host: listen_addr,
             ..
         } = cfg.clone();
         let (context, state) = state::init(cfg, commit_ch);
