@@ -22,6 +22,7 @@ impl InnerLog {
 }
 
 pub struct LogManager {
+    commit_ch: mpsc::Sender<Arc<Vec<u8>>>,
     commit_index: LogIndex,
     snapshot_index: LogIndex,
     logs: Vec<InnerLog>,
@@ -30,8 +31,9 @@ pub struct LogManager {
 }
 
 impl LogManager {
-    pub fn new() -> Self {
+    pub fn new(commit_ch: mpsc::Sender<Arc<Vec<u8>>>) -> Self {
         Self {
+            commit_ch,
             commit_index: 0,
             snapshot_index: 0,
             logs: vec![InnerLog::new(0, vec![])],
@@ -102,7 +104,7 @@ impl LogManager {
         self.snapshot_index
     }
 
-    pub async fn commit(&mut self, index: LogIndex, ch: &mpsc::Sender<Arc<Vec<u8>>>) {
+    pub async fn commit(&mut self, index: LogIndex) {
         if index <= self.commit_index {
             return;
         }
@@ -122,7 +124,7 @@ impl LogManager {
         }
         .iter()
         {
-            ch.send(log.data.clone()).await.unwrap();
+            self.commit_ch.send(log.data.clone()).await.unwrap();
         }
         self.commit_index = index;
     }

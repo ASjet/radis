@@ -22,7 +22,6 @@ pub struct Context {
     log: LogManager,
     peer_next_index: Vec<Arc<Mutex<LogIndex>>>,
     peer_sync_index: Vec<Arc<RwLock<LogIndex>>>,
-    commit_ch: mpsc::Sender<Arc<Vec<u8>>>,
 
     timeout: Arc<OneshotTimer>,
     tick: Arc<PeriodicTimer>,
@@ -61,10 +60,9 @@ impl Context {
             id,
             peers,
             id_map: Arc::new(id_map),
-            log: LogManager::new(),
+            log: LogManager::new(commit_ch),
             peer_next_index: (0..n_peer).map(|_| Arc::new(Mutex::new(0))).collect(),
             peer_sync_index: (0..n_peer).map(|_| Arc::new(RwLock::new(0))).collect(),
-            commit_ch,
 
             timeout: Arc::new(OneshotTimer::new(timeout_event)),
             tick: Arc::new(PeriodicTimer::new(tick_event)),
@@ -129,7 +127,7 @@ impl Context {
     }
 
     pub async fn commit_log(&mut self, index: LogIndex) {
-        self.log.commit(index, &self.commit_ch).await;
+        self.log.commit(index).await;
     }
 
     pub fn peer_next_index(&self, peer: Peer) -> Arc<Mutex<LogIndex>> {
