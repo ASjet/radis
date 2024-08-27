@@ -8,4 +8,5 @@ mod log;
 mod service;
 pub mod state;
 
+pub use log::Persister;
 pub use service::RaftService;

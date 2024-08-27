@@ -2,6 +2,8 @@ use super::config::Config;
 use super::config::REQUEST_TIMEOUT;
 use super::log::LogManager;
 use super::service::PeerClient;
+use super::Persister;
+use anyhow::Result;
 use log::debug;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -67,6 +69,10 @@ impl Context {
             timeout: Arc::new(OneshotTimer::new(timeout_event)),
             tick: Arc::new(PeriodicTimer::new(tick_event)),
         }
+    }
+
+    pub async fn setup_persister(&mut self, persister: Box<dyn Persister>) -> Result<()> {
+        self.log.setup_persister(persister).await
     }
 
     pub async fn init_timer(&self) {
