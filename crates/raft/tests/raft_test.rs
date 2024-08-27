@@ -5,7 +5,7 @@ use raft::RaftService;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 
 #[tokio::test]
 async fn leader_election() {
@@ -95,11 +95,38 @@ async fn command_forward() {
     ctl.close_all().await;
 }
 
+#[tokio::test]
+async fn persistent() {
+    let peers = 3;
+    let mut ctl = Controller::new(peers, 50012);
+    ctl.serve_all().await;
+
+    // Wait for establishing agreement on one leader
+    let leader = ctl.leader().await;
+
+    // Append command to follower
+    let data = b"hello, raft!".to_vec();
+    ctl.agree_one(leader, data.clone()).await;
+
+    ctl.close_all().await;
+
+    // Restart all services
+    ctl.serve_all().await;
+
+    // Expect all committed commands to be commit again
+    for idx in (0..peers).filter(|idx| *idx != leader as i32) {
+        let recv_data = ctl.read_commit(idx as usize).await.unwrap();
+        assert!(recv_data.as_slice() == data.as_slice());
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 struct ControllerConfig {
     election_wait: Duration,
     election_retry: i32,
+    recv_timeout: Duration,
+    recv_retry: i32,
 }
 
 impl Default for ControllerConfig {
@@ -107,6 +134,8 @@ impl Default for ControllerConfig {
         ControllerConfig {
             election_wait: Duration::from_millis(200),
             election_retry: 5,
+            recv_timeout: Duration::from_millis(500),
+            recv_retry: 2,
         }
     }
 }
@@ -220,7 +249,13 @@ impl Controller {
     }
 
     async fn read_commit(&mut self, idx: usize) -> Option<Arc<Vec<u8>>> {
-        self.commit_rxs[idx].recv().await
+        for _ in 0..self.cfg.recv_retry {
+            match timeout(self.cfg.recv_timeout, self.commit_rxs[idx].recv()).await {
+                Ok(result) => return result,
+                Err(_) => continue, // Timeout occurred
+            }
+        }
+        panic!("No commit received");
     }
 
     async fn agree_one(&mut self, srv: usize, cmd: Vec<u8>) {
