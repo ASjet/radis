@@ -1,3 +1,4 @@
+use core::panic;
 use raft::config::Config;
 use raft::state;
 use raft::RaftService;
@@ -12,7 +13,7 @@ async fn leader_election() {
     ctl.serve_all().await;
 
     // Wait for establishing agreement on one leader
-    sleep(Duration::from_millis(1000)).await;
+    ctl.leader().await;
 
     let (followers, candidates, leader_cnt) = ctl.count_roles().await;
     // There should be only one leader, and all others are followers
@@ -21,8 +22,6 @@ async fn leader_election() {
     assert_eq!(leader_cnt, 1);
 
     ctl.close_all().await;
-    // Wait for all connections to finish
-    sleep(Duration::from_millis(500)).await;
 }
 
 #[tokio::test]
@@ -31,24 +30,19 @@ async fn fail_over() {
     ctl.serve_all().await;
 
     // Wait for establishing agreement on one leader
-    sleep(Duration::from_millis(1000)).await;
-
-    let (followers, candidates, leader_cnt) = ctl.count_roles().await;
-    // There should be only one leader, and all others are followers
-    assert_eq!(followers, 2);
-    assert_eq!(candidates, 0);
-    assert_eq!(leader_cnt, 1);
+    let old_leader = ctl.leader().await;
 
     // Leader offline
-    let old_leader = ctl.leader().await.unwrap();
     let old_term = ctl.term(old_leader).await;
     ctl.close(old_leader).await;
 
     // Wait for one follower timeout and start new election
     sleep(Duration::from_millis(1000)).await;
 
-    let (followers, candidates, leader_cnt) = ctl.count_roles().await;
     // There should be a new leader got elected
+    ctl.leader().await;
+
+    let (followers, candidates, leader_cnt) = ctl.count_roles().await;
     assert_eq!(followers, 1);
     assert_eq!(candidates, 0);
     assert_eq!(leader_cnt, 2); // New leader plus old leader
@@ -58,17 +52,14 @@ async fn fail_over() {
     ctl.setup_timer(old_leader).await;
 
     // Wait for re-establishing agreement on new leader
-    sleep(Duration::from_millis(1000)).await;
-
-    let new_leader = ctl.leader().await.unwrap();
+    sleep(Duration::from_millis(500)).await;
+    let new_leader = ctl.leader().await;
     let new_term = ctl.term(new_leader).await;
     // The old leader should be replaced by the new leader with a higher term
     assert_ne!(old_leader, new_leader);
     assert!(new_term > old_term);
 
     ctl.close_all().await;
-    // Wait for all connections to finish
-    sleep(Duration::from_millis(500)).await;
 }
 
 #[tokio::test]
@@ -78,21 +69,13 @@ async fn basic_commit() {
     ctl.serve_all().await;
 
     // Wait for establishing agreement on one leader
-    sleep(Duration::from_millis(1000)).await;
-    let leader = ctl.leader().await.unwrap();
+    let leader = ctl.leader().await;
 
+    // Append command to leader
     let data = b"hello, raft!".to_vec();
+    ctl.agree_one(leader, data).await;
 
-    ctl.append_command(leader, data.clone()).await;
-    let recv_data = ctl.read_commit(leader).await.unwrap();
-    assert!(recv_data.as_slice() == data.as_slice());
-
-    // Wait for commit sync to peers
-    sleep(Duration::from_millis(500)).await;
-    for idx in (0..peers).filter(|idx| *idx != (leader as i32)) {
-        let recv_data = ctl.read_commit(idx as usize).await.unwrap();
-        assert!(recv_data.as_slice() == data.as_slice());
-    }
+    ctl.close_all().await;
 }
 
 #[tokio::test]
@@ -102,30 +85,34 @@ async fn command_forward() {
     ctl.serve_all().await;
 
     // Wait for establishing agreement on one leader
-    sleep(Duration::from_millis(1000)).await;
-    let leader = ctl.leader().await.unwrap();
-    let follower = ctl.follower().await.unwrap();
-
-    let data = b"hello, raft!".to_vec();
+    ctl.leader().await;
 
     // Append command to follower
-    ctl.append_command(follower, data.clone()).await;
+    let data = b"hello, raft!".to_vec();
+    let follower = ctl.follower().await.unwrap();
+    ctl.agree_one(follower, data).await;
 
-    // Expect the command to be forwarded to the leader
-    let recv_data = ctl.read_commit(leader).await.unwrap();
-    assert!(recv_data.as_slice() == data.as_slice());
-
-    // Wait for commit sync to peers
-    sleep(Duration::from_millis(500)).await;
-    for idx in (0..peers).filter(|idx| *idx != (leader as i32)) {
-        let recv_data = ctl.read_commit(idx as usize).await.unwrap();
-        assert!(recv_data.as_slice() == data.as_slice());
-    }
+    ctl.close_all().await;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+struct ControllerConfig {
+    election_wait: Duration,
+    election_retry: i32,
+}
+
+impl Default for ControllerConfig {
+    fn default() -> Self {
+        ControllerConfig {
+            election_wait: Duration::from_millis(200),
+            election_retry: 5,
+        }
+    }
+}
+
 struct Controller {
+    cfg: ControllerConfig,
     services: Vec<RaftService>,
     commit_rxs: Vec<mpsc::Receiver<Arc<Vec<u8>>>>,
 }
@@ -145,6 +132,7 @@ impl Controller {
             commit_rxs.push(commit_rx);
         }
         Controller {
+            cfg: ControllerConfig::default(),
             services,
             commit_rxs,
         }
@@ -171,6 +159,8 @@ impl Controller {
         for i in 0..self.services.len() {
             self.close(i).await;
         }
+        // Wait for all connections to finish
+        sleep(Duration::from_millis(500)).await;
     }
 
     async fn setup_timer(&self, idx: usize) {
@@ -204,13 +194,16 @@ impl Controller {
         (followers, candidates, leader_cnt)
     }
 
-    async fn leader(&self) -> Option<usize> {
-        for i in 0..self.services.len() {
-            if self.role(i).await == state::Role::Leader {
-                return Some(i);
+    async fn leader(&self) -> usize {
+        for _ in 0..self.cfg.election_retry {
+            for i in 0..self.services.len() {
+                if self.role(i).await == state::Role::Leader {
+                    return i;
+                }
             }
+            sleep(self.cfg.election_wait).await;
         }
-        None
+        panic!("No leader elected");
     }
 
     async fn follower(&self) -> Option<usize> {
@@ -228,5 +221,21 @@ impl Controller {
 
     async fn read_commit(&mut self, idx: usize) -> Option<Arc<Vec<u8>>> {
         self.commit_rxs[idx].recv().await
+    }
+
+    async fn agree_one(&mut self, srv: usize, cmd: Vec<u8>) {
+        // Send command to specified service
+        self.append_command(srv, cmd.clone()).await;
+
+        // Expect the command to be committed on leader
+        let leader = self.leader().await;
+        let recv_data = self.read_commit(leader).await.unwrap();
+        assert!(recv_data.as_slice() == cmd.as_slice());
+
+        // Expect the command to be committed on all followers
+        for idx in (0..self.services.len()).filter(|idx| *idx != leader) {
+            let recv_data = self.read_commit(idx as usize).await.unwrap();
+            assert!(recv_data.as_slice() == cmd.as_slice());
+        }
     }
 }
