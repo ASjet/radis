@@ -14,16 +14,19 @@
 
 [workspace]
     members = [
+        "crates/persister",
         "crates/raft",
         "crates/timer",
     ]
     [workspace.dependencies]
         timer = {path = "crates/timer"}
         raft = {path = "crates/raft"}
+        persister = {path = "crates/persister"}
 
 [dependencies]
     timer.workspace = true
     raft.workspace = true
+    persister.workspace = true
     anyhow = "1.0.86"
     bytes = {version = "1.6.1", features = [
         "serde",
