@@ -50,6 +50,8 @@ impl RaftService {
         self.state.clone()
     }
 
+    /// Setup persister for wal and snapshot.
+    /// This method must be called before `RaftService::serve()`
     pub async fn setup_persister(&self, persister: Box<dyn Persister>) -> Result<()> {
         self.context.write().await.setup_persister(persister).await
     }
