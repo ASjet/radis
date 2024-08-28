@@ -309,7 +309,7 @@ struct PseudoPersister {
 
 #[async_trait]
 impl Persister for PseudoPersister {
-    async fn replay_wal(&mut self) -> Result<Option<(state::Term, Vec<u8>)>> {
+    async fn read_wal(&mut self) -> Result<Option<(state::Term, Vec<u8>)>> {
         let log = Ok(self.logs.get(self.offset).cloned());
         self.offset += 1;
         log

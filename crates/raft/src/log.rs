@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 pub trait Persister: Sync + Send {
     /// Reading WAL since the last snapshot
     /// Read a single log each time, return `Ok(None)` on EOF
-    async fn replay_wal(&mut self) -> Result<Option<(Term, Vec<u8>)>>;
+    async fn read_wal(&mut self) -> Result<Option<(Term, Vec<u8>)>>;
     async fn write_wal(&mut self, term: Term, data: &[u8]) -> Result<()>;
 
     async fn read_snapshot(&self) -> Result<Option<(usize, Vec<u8>)>>;
@@ -79,7 +79,7 @@ impl LogManager {
             self.snapshot = Some(data);
         }
 
-        while let Some((term, command)) = p.replay_wal().await? {
+        while let Some((term, command)) = p.read_wal().await? {
             self.logs.push(InnerLog::new(term, command));
         }
         info!(target: "raft::persist",
