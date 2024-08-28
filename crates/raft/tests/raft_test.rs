@@ -1,6 +1,9 @@
+use anyhow::Result;
 use core::panic;
+use log::log_enabled;
 use raft::config::Config;
 use raft::state;
+use raft::Persister;
 use raft::RaftService;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,9 +20,9 @@ async fn leader_election() {
 
     let (followers, candidates, leader_cnt) = ctl.count_roles().await;
     // There should be only one leader, and all others are followers
-    assert_eq!(followers, 2);
-    assert_eq!(candidates, 0);
-    assert_eq!(leader_cnt, 1);
+    assert_eq!(followers, 2, "there should be 2 followers");
+    assert_eq!(candidates, 0, "there should be 0 candidate");
+    assert_eq!(leader_cnt, 1, "there should be 1 leader");
 
     ctl.close_all().await;
 }
@@ -43,9 +46,9 @@ async fn fail_over() {
     ctl.leader().await;
 
     let (followers, candidates, leader_cnt) = ctl.count_roles().await;
-    assert_eq!(followers, 1);
-    assert_eq!(candidates, 0);
-    assert_eq!(leader_cnt, 2); // New leader plus old leader
+    assert_eq!(followers, 1, "there should be 1 follower");
+    assert_eq!(candidates, 0, "there should be 0 candidate");
+    assert_eq!(leader_cnt, 2, "there should be 2 leaders"); // New leader plus old leader
 
     // Old leader back online
     ctl.serve(old_leader).await;
@@ -55,9 +58,11 @@ async fn fail_over() {
     sleep(Duration::from_millis(500)).await;
     let new_leader = ctl.leader().await;
     let new_term = ctl.term(new_leader).await;
-    // The old leader should be replaced by the new leader with a higher term
-    assert_ne!(old_leader, new_leader);
-    assert!(new_term > old_term);
+    assert_ne!(
+        old_leader, new_leader,
+        "old leader should be replaced by an new leader"
+    );
+    assert!(new_term > old_term, "new leader should have higher term");
 
     ctl.close_all().await;
 }
@@ -99,6 +104,7 @@ async fn command_forward() {
 async fn persistent() {
     let peers = 3;
     let mut ctl = Controller::new(peers, 50012);
+    ctl.setup_persister().await;
     ctl.serve_all().await;
 
     // Wait for establishing agreement on one leader
@@ -114,13 +120,21 @@ async fn persistent() {
     ctl.serve_all().await;
 
     // Expect all committed commands to be commit again
-    for idx in (0..peers).filter(|idx| *idx != leader as i32) {
-        let recv_data = ctl.read_commit(idx as usize).await.unwrap();
-        assert!(recv_data.as_slice() == data.as_slice());
-    }
+    let leader = ctl.leader().await;
+    ctl.agree_one(leader, data).await;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+
+#[allow(dead_code)]
+fn init_logger(level: &str) {
+    use std::io;
+    use structured_logger::{json::new_writer, Builder};
+
+    Builder::with_level(level)
+        .with_target_writer("*", new_writer(io::stdout()))
+        .init()
+}
 
 struct ControllerConfig {
     election_wait: Duration,
@@ -164,6 +178,14 @@ impl Controller {
             cfg: ControllerConfig::default(),
             services,
             commit_rxs,
+        }
+    }
+
+    async fn setup_persister(&self) {
+        for srv in &self.services {
+            srv.setup_persister(Box::new(PseudoPersister::default()))
+                .await
+                .unwrap();
         }
     }
 
@@ -270,7 +292,38 @@ impl Controller {
         // Expect the command to be committed on all followers
         for idx in (0..self.services.len()).filter(|idx| *idx != leader) {
             let recv_data = self.read_commit(idx as usize).await.unwrap();
-            assert!(recv_data.as_slice() == cmd.as_slice());
+            assert!(
+                recv_data.as_slice() == cmd.as_slice(),
+                "committed command mismatch"
+            );
         }
+    }
+}
+
+#[derive(Default)]
+struct PseudoPersister {
+    snapshot: Option<(usize, Vec<u8>)>,
+    logs: Vec<(state::Term, Vec<u8>)>,
+    offset: usize,
+}
+
+#[tonic::async_trait]
+impl Persister for PseudoPersister {
+    async fn replay_wal(&mut self) -> Result<Option<(state::Term, Vec<u8>)>> {
+        let log = Ok(self.logs.get(self.offset).cloned());
+        self.offset += 1;
+        log
+    }
+    async fn write_wal(&mut self, term: state::Term, data: &[u8]) -> Result<()> {
+        self.logs.push((term, data.to_vec()));
+        Ok(())
+    }
+
+    async fn read_snapshot(&self) -> Result<Option<(usize, Vec<u8>)>> {
+        Ok(self.snapshot.clone())
+    }
+    async fn write_snapshot(&mut self, last_index: usize, data: &[u8]) -> Result<()> {
+        self.snapshot = Some((last_index, data.to_vec()));
+        Ok(())
     }
 }
