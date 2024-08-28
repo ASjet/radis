@@ -41,6 +41,7 @@ Then this update will be visible to all nodes:
 - [x] Automatic failover
 - [x] Read/Write splitting
 - [x] Write forwarding
+- [x] Persistence(WAL)
 - [ ] Log compaction(snapshot)
 - [ ] Dynamic membership
 

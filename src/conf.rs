@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub listen_addr: String,
     pub raft: RaftConfig,
+    pub raft_data: Option<String>,
 }
 
 impl Config {

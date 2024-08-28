@@ -2,6 +2,8 @@ use super::config::Config;
 use super::config::REQUEST_TIMEOUT;
 use super::log::LogManager;
 use super::service::PeerClient;
+use super::Persister;
+use anyhow::Result;
 use log::debug;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,7 +24,6 @@ pub struct Context {
     log: LogManager,
     peer_next_index: Vec<Arc<Mutex<LogIndex>>>,
     peer_sync_index: Vec<Arc<RwLock<LogIndex>>>,
-    commit_ch: mpsc::Sender<Arc<Vec<u8>>>,
 
     timeout: Arc<OneshotTimer>,
     tick: Arc<PeriodicTimer>,
@@ -61,14 +62,17 @@ impl Context {
             id,
             peers,
             id_map: Arc::new(id_map),
-            log: LogManager::new(),
+            log: LogManager::new(commit_ch),
             peer_next_index: (0..n_peer).map(|_| Arc::new(Mutex::new(0))).collect(),
             peer_sync_index: (0..n_peer).map(|_| Arc::new(RwLock::new(0))).collect(),
-            commit_ch,
 
             timeout: Arc::new(OneshotTimer::new(timeout_event)),
             tick: Arc::new(PeriodicTimer::new(tick_event)),
         }
+    }
+
+    pub async fn setup_persister(&mut self, persister: Box<dyn Persister>) -> Result<()> {
+        self.log.setup_persister(persister).await
     }
 
     pub async fn init_timer(&self) {
@@ -129,7 +133,7 @@ impl Context {
     }
 
     pub async fn commit_log(&mut self, index: LogIndex) {
-        self.log.commit(index, &self.commit_ch).await;
+        self.log.commit(index).await;
     }
 
     pub fn peer_next_index(&self, peer: Peer) -> Arc<Mutex<LogIndex>> {

@@ -3,11 +3,12 @@ use super::context::Context;
 use super::state::{self, State};
 use super::{
     AppendCommandArgs, AppendCommandReply, AppendEntriesArgs, AppendEntriesReply,
-    InstallSnapshotArgs, InstallSnapshotReply, NodeInfoArgs, NodeInfoReply, RaftServer,
+    InstallSnapshotArgs, InstallSnapshotReply, NodeInfoArgs, NodeInfoReply, Persister, RaftServer,
     RequestVoteArgs, RequestVoteReply,
 };
 use super::{Raft, RaftClient};
 use anyhow::Result;
+use async_trait::async_trait;
 use log::{info, trace};
 use std::sync::Arc;
 use std::time::Duration;
@@ -50,6 +51,26 @@ impl RaftService {
         self.state.clone()
     }
 
+    /// Setup persister for wal and snapshot.
+    /// This method must be called before `RaftService::serve()`
+    pub async fn setup_persister(&self, persister: Box<dyn Persister>) -> Result<()> {
+        self.context.write().await.setup_persister(persister).await
+    }
+
+    pub async fn serve(&self) -> Result<()> {
+        let (close_tx, mut close_rx) = mpsc::channel::<()>(1);
+        *self.close_ch.lock().await = Some(close_tx);
+        let addr = self.listen_addr.parse()?;
+        info!(target: "raft::service", id = self.id; "raft gRPC server listening on {addr}");
+        Server::builder()
+            .add_service(RaftServer::new(self.clone()))
+            .serve_with_shutdown(addr, async move {
+                close_rx.recv().await;
+            })
+            .await?;
+        Ok(())
+    }
+
     pub async fn append_command(&self, cmd: Vec<u8>) -> Result<()> {
         info!(target: "raft::service", id = self.id; "append command");
         let state = self.state.lock().await;
@@ -88,20 +109,6 @@ impl RaftService {
         return Err(anyhow::anyhow!("still in election"));
     }
 
-    pub async fn serve(&self) -> Result<()> {
-        let (close_tx, mut close_rx) = mpsc::channel::<()>(1);
-        *self.close_ch.lock().await = Some(close_tx);
-        let addr = self.listen_addr.parse()?;
-        info!(target: "raft::service", id = self.id; "raft gRPC server listening on {addr}");
-        Server::builder()
-            .add_service(RaftServer::new(self.clone()))
-            .serve_with_shutdown(addr, async move {
-                close_rx.recv().await;
-            })
-            .await?;
-        Ok(())
-    }
-
     pub async fn close(&self) {
         if let Some(ch) = self.close_ch.lock().await.take() {
             ch.send(()).await.unwrap();
@@ -112,7 +119,7 @@ impl RaftService {
     }
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl Raft for RaftService {
     async fn request_vote(
         &self,

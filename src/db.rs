@@ -3,6 +3,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use log::{debug, info};
 use mini_redis::{Command, Connection, Frame};
+use persister::FilePersister;
 use raft::RaftService;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
@@ -20,6 +21,7 @@ struct Record {
 pub struct RedisServer {
     listen_addr: String,
     raft_server: RaftService,
+    data_dir: Option<String>,
 
     db: Db,
     commit_rx: mpsc::Receiver<Arc<Vec<u8>>>,
@@ -33,12 +35,20 @@ impl RedisServer {
         Self {
             listen_addr,
             raft_server,
+            data_dir: cfg.raft_data.clone(),
             db: Arc::new(RwLock::new(HashMap::new())),
             commit_rx,
         }
     }
 
     pub async fn serve(&mut self) -> Result<()> {
+        if self.data_dir.is_some() {
+            self.raft_server
+                .setup_persister(Box::new(FilePersister::new(
+                    self.data_dir.as_ref().unwrap(),
+                )))
+                .await?;
+        }
         let raft_srv = self.raft_server.clone();
         tokio::spawn(async move {
             raft_srv.serve().await.unwrap();

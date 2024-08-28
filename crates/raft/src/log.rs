@@ -1,10 +1,23 @@
 use super::context::LogIndex;
 use super::state::Term;
 use super::Log;
-use log::{debug, info};
+use anyhow::Result;
+use async_trait::async_trait;
+use log::{debug, error, info};
 use std::ops::Deref;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+
+#[async_trait]
+pub trait Persister: Sync + Send {
+    /// Reading WAL since the last snapshot
+    /// Read a single log each time, return `Ok(None)` on EOF
+    async fn read_wal(&mut self) -> Result<Option<(Term, Vec<u8>)>>;
+    async fn write_wal(&mut self, term: Term, data: &[u8]) -> Result<()>;
+
+    async fn read_snapshot(&self) -> Result<Option<(usize, Vec<u8>)>>;
+    async fn write_snapshot(&mut self, last_index: usize, data: &[u8]) -> Result<()>;
+}
 
 #[derive(Debug)]
 pub struct InnerLog {
@@ -22,21 +35,58 @@ impl InnerLog {
 }
 
 pub struct LogManager {
+    commit_ch: mpsc::Sender<Arc<Vec<u8>>>,
     commit_index: LogIndex,
     snapshot_index: LogIndex,
     logs: Vec<InnerLog>,
     #[allow(dead_code)]
     snapshot: Option<Vec<u8>>,
+
+    persister: Option<Box<dyn Persister>>,
 }
 
 impl LogManager {
-    pub fn new() -> Self {
+    pub fn new(commit_ch: mpsc::Sender<Arc<Vec<u8>>>) -> Self {
         Self {
+            commit_ch,
             commit_index: 0,
             snapshot_index: 0,
             logs: vec![InnerLog::new(0, vec![])],
             snapshot: None,
+            persister: None,
         }
+    }
+
+    pub async fn setup_persister(&mut self, persister: Box<dyn Persister>) -> Result<()> {
+        info!(target: "raft::persist", "setup persister");
+        self.persister = Some(persister);
+        self.replay_wal().await
+    }
+
+    async fn replay_wal(&mut self) -> Result<()> {
+        let p = match self.persister.as_mut() {
+            Some(p) => p,
+            None => return Ok(()),
+        };
+
+        if let Some((index, data)) = p.read_snapshot().await? {
+            info!(target: "raft::persist",
+                size = data.len(),
+                last_index = index;
+                "restore snapshot"
+            );
+            self.snapshot_index = index as u64;
+            self.snapshot = Some(data);
+        }
+
+        while let Some((term, command)) = p.read_wal().await? {
+            self.logs.push(InnerLog::new(term, command));
+        }
+        info!(target: "raft::persist",
+            logs = self.logs.len();
+            "replay wal"
+        );
+        Ok(())
     }
 
     pub fn append(&mut self, term: Term, log: Vec<u8>) -> LogIndex {
@@ -102,7 +152,7 @@ impl LogManager {
         self.snapshot_index
     }
 
-    pub async fn commit(&mut self, index: LogIndex, ch: &mpsc::Sender<Arc<Vec<u8>>>) {
+    pub async fn commit(&mut self, index: LogIndex) {
         if index <= self.commit_index {
             return;
         }
@@ -115,15 +165,40 @@ impl LogManager {
         // we need to start from commit_index + 1
         let start = (self.commit_index - self.snapshot_index + 1) as usize;
         let end = (index - self.snapshot_index + 1) as usize;
-        for log in if end >= self.logs.len() {
+        for (i, log) in if end >= self.logs.len() {
             &self.logs[start..]
         } else {
             &self.logs[start..end]
         }
         .iter()
+        .enumerate()
         {
-            ch.send(log.data.clone()).await.unwrap();
+            if let Some(persister) = self.persister.as_mut() {
+                if let Err(e) = persister.write_wal(log.term, &log.data).await {
+                    self.commit_index += i as u64;
+                    error!(target: "raft::log",
+                        // error:err = e.into();
+                        "write wal at log[{}] error: {}",
+                        self.commit_index+1, e
+                    );
+                    return;
+                }
+            }
+            if let Err(e) = self.commit_ch.send(log.data.clone()).await {
+                self.commit_index += i as u64;
+                error!(target: "raft::log",
+                    // error:err = e.into();
+                    "commit log[{}] error: {}",
+                    self.commit_index+1, e
+                );
+                return;
+            }
         }
+        info!(target: "raft::log",
+            before = self.commit_index,
+            after = index;
+            "update commit index"
+        );
         self.commit_index = index;
     }
 }

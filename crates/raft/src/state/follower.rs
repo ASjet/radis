@@ -5,6 +5,7 @@ use super::{
 };
 use super::{LogIndex, PeerID, RaftContext, Role, State, Term};
 use crate::config;
+use async_trait::async_trait;
 use log::{debug, info};
 use serde::Serialize;
 use std::sync::Arc;
@@ -119,7 +120,7 @@ impl FollowerState {
     }
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl State for FollowerState {
     fn term(&self) -> Term {
         self.term
