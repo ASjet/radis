@@ -18,10 +18,6 @@ struct Args {
     #[arg(long, default_value_t = String::from("node"))]
     prefix: String,
 
-    /// Create sub directory for every node
-    #[arg(long, default_value_t = false)]
-    sub_dir: bool,
-
     /// Listen host
     #[arg(long, default_value_t = String::from("0.0.0.0"))]
     host: String,
@@ -37,6 +33,10 @@ struct Args {
     /// Redis API listening start port
     #[arg(long, default_value_t = 63790)]
     redis_port: u16,
+
+    /// Enable persistent storage
+    #[arg(long, default_value_t = true)]
+    persist: bool,
 }
 
 fn main() {
@@ -53,17 +53,16 @@ fn main() {
         .enumerate()
         .map(|(i, rc)| Config {
             listen_addr: format!("{}:{}", &args.host, args.redis_port + i as u16),
+            raft_data: if args.persist {
+                Some(format!("{}/{}/data", &args.dir, &rc.id))
+            } else {
+                None
+            },
             raft: rc,
         })
         .for_each(|cfg| {
-            let (path, filename) = if args.sub_dir {
-                (
-                    format!("{}/{}", &args.dir, &cfg.raft.id),
-                    "conf.toml".into(),
-                )
-            } else {
-                (args.dir.clone(), format!("{}.toml", &cfg.raft.id))
-            };
+            let path = format!("{}/{}", &args.dir, &cfg.raft.id);
+            let filename: String = "conf.toml".into();
             let cfg = toml::to_string_pretty(&cfg).unwrap();
             fs::create_dir_all(&path).unwrap();
             fs::write(format!("{}/{}", &path, &filename), cfg.as_bytes()).unwrap();
