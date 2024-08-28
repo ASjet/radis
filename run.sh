@@ -13,12 +13,11 @@ cargo run --bin mkconf -- -p $NODES
 cargo build
 for node in $(seq 1 $NODES); do
     node_name="${NODE_PREFIX}$(($node - 1))"
-    ./target/debug/radis -c ${node_name}.toml > ${LOG_DIR}/${node_name}.log &
+    ./target/debug/radis -c ${node_name}/conf.toml > ${node_name}/radis.log &
 done
 
 function cleanup {
     pkill -9 radis
-    rm -f ${NODE_PREFIX}*.toml
     exit 0
 }
 
