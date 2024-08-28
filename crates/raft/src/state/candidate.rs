@@ -6,6 +6,7 @@ use super::{
 };
 use super::{PeerID, RaftContext, Role, State, Term};
 use crate::config;
+use async_trait::async_trait;
 use futures::future;
 use log::{debug, error, info};
 use serde::Serialize;
@@ -24,7 +25,7 @@ impl CandidateState {
     }
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl State for CandidateState {
     fn term(&self) -> Term {
         self.term

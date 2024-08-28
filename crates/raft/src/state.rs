@@ -5,6 +5,7 @@ use super::{
     AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply,
     RequestVoteArgs, RequestVoteReply,
 };
+use async_trait::async_trait;
 use log::{debug, error, info};
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
@@ -38,7 +39,7 @@ impl Role {
     }
 }
 
-#[tonic::async_trait]
+#[async_trait]
 pub trait State: Sync + Send + Debug {
     fn term(&self) -> Term;
     fn role(&self) -> Role;

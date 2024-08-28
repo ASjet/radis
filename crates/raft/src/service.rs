@@ -8,6 +8,7 @@ use super::{
 };
 use super::{Raft, RaftClient};
 use anyhow::Result;
+use async_trait::async_trait;
 use log::{info, trace};
 use std::sync::Arc;
 use std::time::Duration;
@@ -118,7 +119,7 @@ impl RaftService {
     }
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl Raft for RaftService {
     async fn request_vote(
         &self,

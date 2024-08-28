@@ -2,12 +2,13 @@ use super::context::LogIndex;
 use super::state::Term;
 use super::Log;
 use anyhow::Result;
+use async_trait::async_trait;
 use log::{debug, error, info};
 use std::ops::Deref;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-#[tonic::async_trait]
+#[async_trait]
 pub trait Persister: Sync + Send {
     /// Reading WAL since the last snapshot
     /// Read a single log each time, return `Ok(None)` on EOF

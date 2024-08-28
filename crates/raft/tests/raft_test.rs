@@ -1,6 +1,6 @@
 use anyhow::Result;
+use async_trait::async_trait;
 use core::panic;
-use log::log_enabled;
 use raft::config::Config;
 use raft::state;
 use raft::Persister;
@@ -307,7 +307,7 @@ struct PseudoPersister {
     offset: usize,
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl Persister for PseudoPersister {
     async fn replay_wal(&mut self) -> Result<Option<(state::Term, Vec<u8>)>> {
         let log = Ok(self.logs.get(self.offset).cloned());

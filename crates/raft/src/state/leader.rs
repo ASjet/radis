@@ -4,6 +4,7 @@ use super::{
 };
 use super::{PeerID, RaftContext, Role, State, Term};
 use crate::config;
+use async_trait::async_trait;
 use futures::future;
 use log::{debug, error, info};
 use serde::Serialize;
@@ -141,7 +142,7 @@ impl LeaderState {
     }
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl State for LeaderState {
     fn term(&self) -> Term {
         self.term
