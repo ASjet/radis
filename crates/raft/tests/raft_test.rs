@@ -122,6 +122,8 @@ async fn persistent() {
     // Expect all committed commands to be commit again
     let leader = ctl.leader().await;
     ctl.agree_one(leader, data).await;
+
+    ctl.close_all().await;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
