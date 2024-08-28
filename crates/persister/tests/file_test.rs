@@ -2,6 +2,12 @@ use persister::FilePersister;
 use persister::Persister;
 
 #[tokio::test]
+async fn wal_not_exist() {
+    let mut fp = fp_at("not_exist");
+    assert_eq!(None, fp.read_wal().await.unwrap());
+}
+
+#[tokio::test]
 async fn rw_wal() {
     let mut fp = fp_at("file");
 

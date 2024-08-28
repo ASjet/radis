@@ -37,20 +37,29 @@ impl FilePersister {
         self.wal_w.as_mut().unwrap()
     }
 
-    async fn wal_read_handle(&mut self) -> &mut File {
+    async fn wal_read_handle(&mut self) -> std::io::Result<&mut File> {
         if self.wal_r.is_none() {
             let path = format!("{}/wal/log", self.dir);
-            let file = File::open(path).await.unwrap();
+            let file = File::open(path).await?;
             self.wal_r = Some(file);
         }
-        self.wal_r.as_mut().unwrap()
+        Ok(self.wal_r.as_mut().unwrap())
     }
 }
 
 #[async_trait]
 impl Persister for FilePersister {
     async fn read_wal(&mut self) -> Result<Option<(Term, Vec<u8>)>> {
-        let wal = self.wal_read_handle().await;
+        let wal = match self.wal_read_handle().await {
+            Ok(wal) => wal,
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    return Ok(None);
+                } else {
+                    return Err(e.into());
+                }
+            }
+        };
 
         // Read the length of the entry
         let mut length_bytes = [0u8; size_of::<usize>()];
@@ -87,9 +96,11 @@ impl Persister for FilePersister {
     }
 
     async fn read_snapshot(&self) -> Result<Option<(usize, Vec<u8>)>> {
-        todo!()
+        // TODO: implement me
+        Ok(None)
     }
     async fn write_snapshot(&mut self, _last_index: usize, _data: &[u8]) -> Result<()> {
-        todo!()
+        // TODO: implement me
+        Ok(())
     }
 }
