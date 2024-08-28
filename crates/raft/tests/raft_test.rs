@@ -147,8 +147,8 @@ impl Default for ControllerConfig {
     fn default() -> Self {
         ControllerConfig {
             election_wait: Duration::from_millis(200),
-            election_retry: 5,
-            recv_timeout: Duration::from_millis(500),
+            election_retry: 10,
+            recv_timeout: Duration::from_millis(1000),
             recv_retry: 2,
         }
     }
