@@ -5,9 +5,11 @@ use raft::config::Config;
 use raft::state;
 use raft::Persister;
 use raft::RaftService;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 use tokio::time::{sleep, timeout};
 
 #[tokio::test]
@@ -101,7 +103,7 @@ async fn command_forward() {
 }
 
 #[tokio::test]
-async fn persistent() {
+async fn write_wal() {
     let peers = 3;
     let mut ctl = Controller::new(peers, 50012);
     ctl.setup_persister().await;
@@ -111,15 +113,34 @@ async fn persistent() {
     let leader = ctl.leader().await;
 
     // Append command to follower
-    let data = b"hello, raft!".to_vec();
+    let data = b"write wal".to_vec();
     ctl.agree_one(leader, data.clone()).await;
 
-    ctl.close_all().await;
+    // Expect all nodes write committed command to WAL
+    for i in 0..peers {
+        let wal = ctl.read_wal(i as usize).await;
+        assert_eq!(wal.len(), 1, "wal should have one entry");
+        assert_eq!(wal[0].1.as_slice(), data.as_slice(), "wal data mismatch");
+    }
 
-    // Restart all services
+    ctl.close_all().await;
+}
+
+#[tokio::test]
+async fn replay_wal() {
+    let peers = 3;
+    let mut ctl = Controller::new(peers, 50015);
+    ctl.setup_persister().await;
+
+    // Prepare WAL data
+    let data = b"replay wal".to_vec();
+    for i in 0..peers {
+        ctl.write_wal(i as usize, 1, data.clone()).await;
+    }
+
     ctl.serve_all().await;
 
-    // Expect all committed commands to be commit again
+    // Expect all nodes replay WAL and commit again after established agreement
     let leader = ctl.leader().await;
     ctl.agree_one(leader, data).await;
 
@@ -160,12 +181,15 @@ struct Controller {
     cfg: ControllerConfig,
     services: Vec<RaftService>,
     commit_rxs: Vec<mpsc::Receiver<Arc<Vec<u8>>>>,
+
+    node_wal: HashMap<usize, Arc<Mutex<Vec<(state::Term, Vec<u8>)>>>>,
 }
 
 impl Controller {
     fn new(peers: i32, port_base: u16) -> Self {
         let mut services = Vec::with_capacity(peers as usize);
         let mut commit_rxs = Vec::with_capacity(peers as usize);
+        let mut node_wal = HashMap::new();
         for cfg in Config::builder()
             .peers(peers)
             .base_port(port_base)
@@ -175,20 +199,30 @@ impl Controller {
             let (commit_tx, commit_rx) = mpsc::channel(1);
             services.push(RaftService::new(cfg, commit_tx));
             commit_rxs.push(commit_rx);
+            node_wal.insert(services.len() - 1, Arc::new(Mutex::new(Vec::new())));
         }
         Controller {
             cfg: ControllerConfig::default(),
             services,
             commit_rxs,
+            node_wal,
         }
     }
 
     async fn setup_persister(&self) {
-        for srv in &self.services {
-            srv.setup_persister(Box::new(PseudoPersister::default()))
+        for (idx, srv) in self.services.iter().enumerate() {
+            srv.setup_persister(Box::new(MockPersister::new(self.node_wal[&idx].clone())))
                 .await
                 .unwrap();
         }
+    }
+
+    async fn read_wal(&self, idx: usize) -> Vec<(state::Term, Vec<u8>)> {
+        self.node_wal[&idx].lock().await.clone()
+    }
+
+    async fn write_wal(&self, idx: usize, term: state::Term, data: Vec<u8>) {
+        self.node_wal[&idx].lock().await.push((term, data));
     }
 
     async fn serve(&mut self, idx: usize) {
@@ -303,21 +337,30 @@ impl Controller {
 }
 
 #[derive(Default)]
-struct PseudoPersister {
+struct MockPersister {
     snapshot: Option<(usize, Vec<u8>)>,
-    logs: Vec<(state::Term, Vec<u8>)>,
+    logs: Arc<Mutex<Vec<(state::Term, Vec<u8>)>>>,
     offset: usize,
 }
 
+impl MockPersister {
+    fn new(logs: Arc<Mutex<Vec<(state::Term, Vec<u8>)>>>) -> Self {
+        MockPersister {
+            logs,
+            ..Default::default()
+        }
+    }
+}
+
 #[async_trait]
-impl Persister for PseudoPersister {
+impl Persister for MockPersister {
     async fn read_wal(&mut self) -> Result<Option<(state::Term, Vec<u8>)>> {
-        let log = Ok(self.logs.get(self.offset).cloned());
+        let log = Ok(self.logs.lock().await.get(self.offset).cloned());
         self.offset += 1;
         log
     }
     async fn write_wal(&mut self, term: state::Term, data: &[u8]) -> Result<()> {
-        self.logs.push((term, data.to_vec()));
+        self.logs.lock().await.push((term, data.to_vec()));
         Ok(())
     }
 
