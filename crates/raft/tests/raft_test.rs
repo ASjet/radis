@@ -147,6 +147,32 @@ async fn replay_wal() {
     ctl.close_all().await;
 }
 
+#[tokio::test]
+async fn persistence() {
+    let peers = 3;
+    let mut ctl = Controller::new(peers, 50018);
+    ctl.setup_persister().await;
+    ctl.serve_all().await;
+
+    // Wait for establishing agreement on one leader
+    let leader = ctl.leader().await;
+
+    // Append command to follower
+    let data = b"hello, raft!".to_vec();
+    ctl.agree_one(leader, data.clone()).await;
+
+    ctl.close_all().await;
+
+    // Restart all services
+    ctl.serve_all().await;
+
+    // Expect all committed commands to be commit again
+    let leader = ctl.leader().await;
+    ctl.agree_one(leader, data).await;
+
+    ctl.close_all().await;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 #[allow(dead_code)]
