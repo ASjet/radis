@@ -1,5 +1,4 @@
-use super::config::Config;
-use super::config::REQUEST_TIMEOUT;
+use super::config::{Config, REQUEST_TIMEOUT};
 use super::log::LogManager;
 use super::service::PeerClient;
 use super::Persister;
@@ -14,7 +13,7 @@ use tokio::sync::{Mutex, RwLock};
 
 pub type PeerID = String;
 pub type Peer = usize;
-pub type LogIndex = u64;
+pub type LogIndex = usize;
 
 pub struct Context {
     id: String,

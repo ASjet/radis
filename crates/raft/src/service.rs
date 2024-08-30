@@ -1,12 +1,12 @@
 use super::config::Config;
 use super::context::Context;
 use super::state::{self, State};
+use super::Persister;
 use super::{
     AppendCommandArgs, AppendCommandReply, AppendEntriesArgs, AppendEntriesReply,
-    InstallSnapshotArgs, InstallSnapshotReply, NodeInfoArgs, NodeInfoReply, Persister, RaftServer,
-    RequestVoteArgs, RequestVoteReply,
+    InstallSnapshotArgs, InstallSnapshotReply, NodeInfoArgs, NodeInfoReply, Raft, RaftClient,
+    RaftServer, RequestVoteArgs, RequestVoteReply,
 };
-use super::{Raft, RaftClient};
 use anyhow::Result;
 use async_trait::async_trait;
 use log::{info, trace};

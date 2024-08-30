@@ -1,4 +1,4 @@
-use super::{Persister, Term};
+use super::{LogIndex, Persister, Term};
 use anyhow::Result;
 use async_trait::async_trait;
 use tokio::{
@@ -72,34 +72,32 @@ impl Persister for FilePersister {
             }
             Err(e) => return Err(e.into()),
         }
-        let length = usize::from_le_bytes(length_bytes);
+        let length = usize::from_be_bytes(length_bytes);
 
-        // Read the term
-        let mut term_bytes = [0u8; size_of::<Term>()];
-        wal.read_exact(&mut term_bytes).await?;
-        let term = Term::from_le_bytes(term_bytes);
+        // Read the entry
+        let mut entry_bytes = vec![0u8; length];
+        wal.read_exact(&mut entry_bytes).await?;
 
-        // Read the data
-        let mut data = vec![0u8; length - size_of::<Term>()];
-        wal.read_exact(&mut data).await?;
+        let (term_bytes, data) = entry_bytes.split_at(size_of::<Term>());
+        let term = Term::from_be_bytes(term_bytes.try_into().unwrap());
 
-        Ok(Some((term, data)))
+        Ok(Some((term, data.to_vec())))
     }
 
     async fn write_wal(&mut self, term: Term, data: &[u8]) -> Result<()> {
         let wal = self.wal_write_handle().await;
         let length = size_of::<Term>() + data.len();
-        wal.write(&length.to_le_bytes()).await?;
-        wal.write(&term.to_le_bytes()).await?;
+        wal.write(&length.to_be_bytes()).await?;
+        wal.write(&term.to_be_bytes()).await?;
         wal.write(data).await?;
         Ok(())
     }
 
-    async fn read_snapshot(&self) -> Result<Option<(usize, Vec<u8>)>> {
+    async fn read_snapshot(&self) -> Result<Option<(LogIndex, Vec<u8>)>> {
         // TODO: implement me
         Ok(None)
     }
-    async fn write_snapshot(&mut self, _last_index: usize, _data: &[u8]) -> Result<()> {
+    async fn write_snapshot(&mut self, _last_index: LogIndex, _data: &[u8]) -> Result<()> {
         // TODO: implement me
         Ok(())
     }
