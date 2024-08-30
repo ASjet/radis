@@ -1,4 +1,4 @@
-use super::{Persister, Term};
+use super::{LogIndex, Persister, Term};
 use anyhow::Result;
 use async_trait::async_trait;
 use tokio::{
@@ -93,11 +93,11 @@ impl Persister for FilePersister {
         Ok(())
     }
 
-    async fn read_snapshot(&self) -> Result<Option<(usize, Vec<u8>)>> {
+    async fn read_snapshot(&self) -> Result<Option<(LogIndex, Vec<u8>)>> {
         // TODO: implement me
         Ok(None)
     }
-    async fn write_snapshot(&mut self, _last_index: usize, _data: &[u8]) -> Result<()> {
+    async fn write_snapshot(&mut self, _last_index: LogIndex, _data: &[u8]) -> Result<()> {
         // TODO: implement me
         Ok(())
     }

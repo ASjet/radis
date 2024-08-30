@@ -1,5 +1,4 @@
-pub use raft::state::Term;
-pub use raft::Persister;
+pub use raft::{LogIndex, Persister, Term};
 
 mod file;
 

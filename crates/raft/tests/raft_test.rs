@@ -3,13 +3,11 @@ use async_trait::async_trait;
 use core::panic;
 use raft::config::Config;
 use raft::state;
-use raft::Persister;
-use raft::RaftService;
+use raft::{LogIndex, Persister, RaftService, Term};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 use tokio::time::{sleep, timeout};
 
 #[tokio::test]
@@ -364,13 +362,13 @@ impl Controller {
 
 #[derive(Default)]
 struct MockPersister {
-    snapshot: Option<(usize, Vec<u8>)>,
-    logs: Arc<Mutex<Vec<(state::Term, Vec<u8>)>>>,
-    offset: usize,
+    snapshot: Option<(LogIndex, Vec<u8>)>,
+    logs: Arc<Mutex<Vec<(Term, Vec<u8>)>>>,
+    offset: LogIndex,
 }
 
 impl MockPersister {
-    fn new(logs: Arc<Mutex<Vec<(state::Term, Vec<u8>)>>>) -> Self {
+    fn new(logs: Arc<Mutex<Vec<(Term, Vec<u8>)>>>) -> Self {
         MockPersister {
             logs,
             ..Default::default()
@@ -380,20 +378,20 @@ impl MockPersister {
 
 #[async_trait]
 impl Persister for MockPersister {
-    async fn read_wal(&mut self) -> Result<Option<(state::Term, Vec<u8>)>> {
+    async fn read_wal(&mut self) -> Result<Option<(Term, Vec<u8>)>> {
         let log = Ok(self.logs.lock().await.get(self.offset).cloned());
         self.offset += 1;
         log
     }
-    async fn write_wal(&mut self, term: state::Term, data: &[u8]) -> Result<()> {
+    async fn write_wal(&mut self, term: Term, data: &[u8]) -> Result<()> {
         self.logs.lock().await.push((term, data.to_vec()));
         Ok(())
     }
 
-    async fn read_snapshot(&self) -> Result<Option<(usize, Vec<u8>)>> {
+    async fn read_snapshot(&self) -> Result<Option<(LogIndex, Vec<u8>)>> {
         Ok(self.snapshot.clone())
     }
-    async fn write_snapshot(&mut self, last_index: usize, data: &[u8]) -> Result<()> {
+    async fn write_snapshot(&mut self, last_index: LogIndex, data: &[u8]) -> Result<()> {
         self.snapshot = Some((last_index, data.to_vec()));
         Ok(())
     }

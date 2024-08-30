@@ -15,8 +15,8 @@ pub trait Persister: Sync + Send {
     async fn read_wal(&mut self) -> Result<Option<(Term, Vec<u8>)>>;
     async fn write_wal(&mut self, term: Term, data: &[u8]) -> Result<()>;
 
-    async fn read_snapshot(&self) -> Result<Option<(usize, Vec<u8>)>>;
-    async fn write_snapshot(&mut self, last_index: usize, data: &[u8]) -> Result<()>;
+    async fn read_snapshot(&self) -> Result<Option<(LogIndex, Vec<u8>)>>;
+    async fn write_snapshot(&mut self, last_index: LogIndex, data: &[u8]) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -75,7 +75,7 @@ impl LogManager {
                 last_index = index;
                 "restore snapshot"
             );
-            self.snapshot_index = index as u64;
+            self.snapshot_index = index;
             self.snapshot = Some(data);
         }
 
@@ -91,7 +91,7 @@ impl LogManager {
 
     pub fn append(&mut self, term: Term, log: Vec<u8>) -> LogIndex {
         self.logs.push(InnerLog::new(term, log));
-        self.snapshot_index + self.logs.len() as u64
+        self.snapshot_index + self.logs.len()
     }
 
     pub fn since(&self, start: usize) -> Vec<Log> {
@@ -110,7 +110,7 @@ impl LogManager {
     pub fn latest(&self) -> Option<(LogIndex, Term)> {
         self.logs
             .last()
-            .map(|log| (self.snapshot_index + self.logs.len() as u64 - 1, log.term))
+            .map(|log| (self.snapshot_index + self.logs.len() - 1, log.term))
     }
 
     pub fn term(&self, index: LogIndex) -> Option<Term> {
@@ -128,7 +128,7 @@ impl LogManager {
         self.logs
             .iter()
             .position(|log| log.term == term)
-            .map(|index| index as u64 + self.snapshot_index)
+            .map(|index| index + self.snapshot_index)
     }
 
     pub fn delete_since(&mut self, index: LogIndex) -> usize {
@@ -175,7 +175,7 @@ impl LogManager {
         {
             if let Some(persister) = self.persister.as_mut() {
                 if let Err(e) = persister.write_wal(log.term, &log.data).await {
-                    self.commit_index += i as u64;
+                    self.commit_index += i;
                     error!(target: "raft::log",
                         // error:err = e.into();
                         "write wal at log[{}] error: {}",
@@ -185,7 +185,7 @@ impl LogManager {
                 }
             }
             if let Err(e) = self.commit_ch.send(log.data.clone()).await {
-                self.commit_index += i as u64;
+                self.commit_index += i;
                 error!(target: "raft::log",
                     // error:err = e.into();
                     "commit log[{}] error: {}",

@@ -1,6 +1,5 @@
 use super::config::Config;
-use super::context::Context;
-use super::context::{LogIndex, PeerID};
+use super::context::{Context, LogIndex, PeerID};
 use super::{
     AppendEntriesArgs, AppendEntriesReply, InstallSnapshotArgs, InstallSnapshotReply,
     RequestVoteArgs, RequestVoteReply,
@@ -138,7 +137,7 @@ pub trait State: Sync + Send + Debug {
                 AppendEntriesReply {
                     term: self.term(),
                     success: false,
-                    last_log_index,
+                    last_log_index: last_log_index as u64,
                     last_log_term,
                 },
                 None,

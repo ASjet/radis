@@ -2,7 +2,7 @@ use super::{
     AppendEntriesArgs, AppendEntriesReply, FollowerState, InstallSnapshotArgs,
     InstallSnapshotReply, RequestVoteArgs, RequestVoteReply,
 };
-use super::{PeerID, RaftContext, Role, State, Term};
+use super::{LogIndex, PeerID, RaftContext, Role, State, Term};
 use crate::config;
 use async_trait::async_trait;
 use futures::future;
@@ -38,7 +38,7 @@ impl LeaderState {
                     prev_log_index: 0,
                     prev_log_term: 0,
                     entries: vec![],
-                    leader_commit: ctx.log().commit_index(),
+                    leader_commit: ctx.log().commit_index() as u64,
                 };
 
                 (ctx.get_peer(peer), ctx.peer_next_index(peer), args)
@@ -57,11 +57,11 @@ impl LeaderState {
                     match log.term(prev_index) {
                         Some(term) => {
                             args.prev_log_term = term;
-                            args.prev_log_index = prev_index;
+                            args.prev_log_index = prev_index as u64;
                         }
                         None => {
                             args.prev_log_term = args.term;
-                            args.prev_log_index = log.snapshot_index();
+                            args.prev_log_index = log.snapshot_index() as u64;
                         }
                     }
                     args.entries = log.since(*peer_next_index as usize);
@@ -101,10 +101,10 @@ impl LeaderState {
                                 "sync peer log"
                             );
                         }
-                        *peer_next_index = resp.last_log_index + 1;
+                        *peer_next_index = resp.last_log_index as LogIndex + 1;
                         ctx.write()
                             .await
-                            .update_peer_index(peer, resp.last_log_index)
+                            .update_peer_index(peer, resp.last_log_index as LogIndex)
                             .await;
                     }
                     Err(e) => {

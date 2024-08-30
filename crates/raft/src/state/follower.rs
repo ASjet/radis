@@ -43,7 +43,7 @@ impl FollowerState {
         // From 5.4.1:
         // If the logs end with the same term, then
         // whichever log is longer is more up-to-date.
-        return args.last_log_index >= latest_index;
+        return args.last_log_index as LogIndex >= latest_index;
     }
 
     /// Handle entries from leader, return if any conflict appears
@@ -61,7 +61,7 @@ impl FollowerState {
 
         // Reply false if log doesn’t contain an entry at prevLogIndex
         // whose term matches prevLogTerm (§5.3)
-        if args.prev_log_index > latest_index {
+        if args.prev_log_index as LogIndex > latest_index {
             info!(target: "raft::log",
                 state:serde = self,
                 prev_index = args.prev_log_index,
@@ -71,7 +71,7 @@ impl FollowerState {
             return Some((latest_term, latest_index));
         }
 
-        let prev_term = match log.term(args.prev_log_index) {
+        let prev_term = match log.term(args.prev_log_index as LogIndex) {
             Some(term) => term,
             None => {
                 info!(target: "raft::log",
@@ -95,10 +95,10 @@ impl FollowerState {
             // Fallback the whole term once a time
             let term_start = log.first_log_at_term(prev_term).unwrap();
             log.delete_since(term_start);
-            return Some((prev_term, args.prev_log_index));
+            return Some((prev_term, args.prev_log_index as LogIndex));
         }
 
-        log.delete_since(args.prev_log_index + 1);
+        log.delete_since(args.prev_log_index as LogIndex + 1);
 
         // Append any new entries not already in the log
         let entries = args.entries.len();
@@ -247,7 +247,7 @@ impl State for FollowerState {
                 AppendEntriesReply {
                     term: self.term,
                     success: false,
-                    last_log_index: conflict_index,
+                    last_log_index: conflict_index as u64,
                     last_log_term: conflict_term,
                 }
             } else {
@@ -255,11 +255,11 @@ impl State for FollowerState {
                     Some(log) => log,
                     None => (0, 0),
                 };
-                ctx.write().await.commit_log(commit_index).await;
+                ctx.write().await.commit_log(commit_index as LogIndex).await;
                 AppendEntriesReply {
                     term: self.term,
                     success: true,
-                    last_log_index,
+                    last_log_index: last_log_index as u64,
                     last_log_term,
                 }
             }
@@ -271,7 +271,7 @@ impl State for FollowerState {
             AppendEntriesReply {
                 term: self.term,
                 success: false,
-                last_log_index,
+                last_log_index: last_log_index as u64,
                 last_log_term,
             }
         };
